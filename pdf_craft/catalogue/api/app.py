@@ -1,0 +1,556 @@
+from __future__ import annotations
+
+import os
+from collections.abc import Generator, Sequence
+from pathlib import Path
+
+from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+
+from .. import read_repository
+from ..database import CatalogueDB
+from ..postgres import PostgresCatalogueDB, initialize_postgres, resolve_postgres_dsn
+from ..search import get_book_stats, search_books_with_authors
+
+app = FastAPI(title="pdf-craft catalogue", version="0.1.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
+    allow_credentials=False,
+)
+
+_backend_kind: str | None = None
+_db_path: Path | None = None
+_postgres_dsn: str | None = None
+
+
+def get_db() -> Generator[CatalogueDB | PostgresCatalogueDB, None, None]:
+    if _backend_kind == "postgres" and _postgres_dsn is not None:
+        db = PostgresCatalogueDB.connect(_postgres_dsn)
+    elif _backend_kind == "sqlite" and _db_path is not None:
+        db = CatalogueDB.connect(_db_path)
+    else:
+        raise HTTPException(status_code=503, detail="Database not initialized")
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+def get_sqlite_db() -> Generator[CatalogueDB, None, None]:
+    """Dependency for the legacy API, which is intentionally SQLite-only."""
+    if _backend_kind != "sqlite" or _db_path is None:
+        raise HTTPException(
+            status_code=503,
+            detail="/v1 requires an SQLite backend; PostgreSQL supports normalized /v2 reads only",
+        )
+    db = CatalogueDB.connect(_db_path)
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+def init_app(
+    db_path: str | Path | None = None,
+    cors_origins: Sequence[str] | None = None,
+    *,
+    postgres_dsn: str | None = None,
+) -> FastAPI:
+    """Configure explicit SQLite or PostgreSQL request-scoped connections."""
+    global _backend_kind, _db_path, _postgres_dsn
+    if postgres_dsn is None and isinstance(db_path, str) and db_path.startswith(("postgres://", "postgresql://")):
+        postgres_dsn = db_path
+        db_path = None
+    if postgres_dsn is None and db_path is None:
+        postgres_dsn = os.environ.get("CATALOGUE_POSTGRES_DSN")
+    if postgres_dsn is not None:
+        resolved = resolve_postgres_dsn(postgres_dsn)
+        initialize_postgres(resolved)
+        _backend_kind = "postgres"
+        _postgres_dsn = resolved
+        _db_path = None
+    elif db_path is not None:
+        path = Path(db_path)
+        initialized = CatalogueDB(path)
+        initialized.close()
+        _backend_kind = "sqlite"
+        _db_path = path
+        _postgres_dsn = None
+    else:
+        raise ValueError(
+            "Catalogue API requires an SQLite path or PostgreSQL DSN; no backend fallback is configured"
+        )
+    if cors_origins is not None:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(cors_origins),
+            allow_methods=["GET", "POST", "OPTIONS"],
+            allow_headers=["*"],
+            allow_credentials=False,
+        )
+    return app
+
+
+# ── Pydantic models ────────────────────────────────────────────────
+
+class BookResponse(BaseModel):
+    id: int
+    title: str
+    title_sort: str | None = None
+    description: str | None = None
+    language: str | None = None
+    publisher: str | None = None
+    isbn: str | None = None
+    edition: str | None = None
+    source_date: str | None = None
+    series: str | None = None
+    series_index: float | None = None
+    page_count: int | None = None
+    cover_path: str | None = None
+    rokomari_url: str | None = None
+    google_books_id: str | None = None
+    open_library_key: str | None = None
+
+
+class AuthorResponse(BaseModel):
+    id: int
+    name: str
+    name_sort: str | None = None
+
+
+class BookListResponse(BaseModel):
+    items: list[BookResponse]
+    total: int
+    offset: int
+    limit: int
+
+
+class BookWithAuthorsResponse(BaseModel):
+    book: BookResponse
+    authors: list[AuthorResponse]
+    subjects: list[str]
+
+
+class BookSearchResponse(BaseModel):
+    items: list[BookWithAuthorsResponse]
+    total: int
+    query: str
+
+
+class StatsResponse(BaseModel):
+    total_books: int
+    total_authors: int
+    total_subjects: int
+    total_languages: int
+    total_files: int
+
+
+class ReadingListCreate(BaseModel):
+    user_id: int
+    name: str
+
+
+class ReadingListResponse(BaseModel):
+    id: int
+    user_id: int
+    name: str
+
+
+class BookmarkCreate(BaseModel):
+    user_id: int
+    book_id: int
+    position: str
+    note: str | None = None
+
+
+class ReviewCreate(BaseModel):
+    user_id: int
+    book_id: int
+    rating: int
+    text: str | None = None
+
+
+class ProgressUpdate(BaseModel):
+    user_id: int
+    book_id: int
+    position: str
+
+
+class NormalizedAsset(BaseModel):
+    id: int
+    edition_id: int | None = None
+    document_id: int | None = None
+    asset_type: str
+    storage_uri: str
+    sha256: str | None = None
+    mime_type: str | None = None
+    width: int | None = None
+    height: int | None = None
+    attribution: str | None = None
+    rights: str | None = None
+    is_selected: int = 0
+
+
+class NormalizedWorkResponse(BaseModel):
+    id: int
+    title: str
+    subtitle: str | None = None
+    sort_title: str | None = None
+    language: str | None = None
+    description: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    identifiers: list[dict]
+    editions: list[dict]
+    sources: list[str]
+
+
+class NormalizedEditionResponse(BaseModel):
+    id: int
+    work_id: int | None = None
+    title: str
+    subtitle: str | None = None
+    publisher: str | None = None
+    publication_date: str | None = None
+    edition_statement: str | None = None
+    language: str | None = None
+    description: str | None = None
+    page_count: int | None = None
+    work: dict | None = None
+    people: list[dict]
+    identifiers: list[dict]
+    assets: list[dict]
+    sources: list[str]
+    documents: list[dict]
+
+
+class NormalizedDocumentResponse(BaseModel):
+    id: int
+    sha256: str
+    source_path: str
+    file_size: int
+    media_type: str
+    metadata_json: str
+    matches: list[dict]
+    assets: list[dict]
+    artifacts: list[dict]
+
+
+class NormalizedSearchResponse(BaseModel):
+    items: list[dict]
+    next: str | None = None
+
+
+class NormalizedStatsResponse(BaseModel):
+    works: int
+    editions: int
+    people: int
+    identifiers: int
+    local_documents: int
+    document_matches: int
+    assets: int
+    artifacts: int
+    source_coverage: list[dict]
+
+
+# Normalized v2 is intentionally read-only.  The repository is passed a fresh
+# connection for every request, leaving the database implementation replaceable.
+@app.get("/v2/health")
+def normalized_health(db: CatalogueDB | PostgresCatalogueDB = Depends(get_db)) -> dict[str, str]:
+    db.conn.execute("SELECT 1")
+    return {"status": "ok", "backend": "postgres" if isinstance(db, PostgresCatalogueDB) else "sqlite"}
+
+
+@app.get("/v2/stats", response_model=NormalizedStatsResponse)
+def normalized_stats(db: CatalogueDB | PostgresCatalogueDB = Depends(get_db)) -> NormalizedStatsResponse:
+    return NormalizedStatsResponse(**read_repository.stats(db.conn))
+
+
+@app.get("/v2/search", response_model=NormalizedSearchResponse)
+def normalized_search(
+    q: str = Query(..., min_length=1), limit: int = Query(20, ge=1, le=100),
+    after: str | None = Query(None), db: CatalogueDB | PostgresCatalogueDB = Depends(get_db),
+) -> NormalizedSearchResponse:
+    try:
+        return NormalizedSearchResponse(**read_repository.search(db.conn, q, limit, after))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/v2/works", response_model=list[NormalizedWorkResponse])
+def normalized_works(
+    limit: int = Query(20, ge=1, le=100), after: int | None = Query(None, ge=0),
+    db: CatalogueDB | PostgresCatalogueDB = Depends(get_db),
+) -> list[NormalizedWorkResponse]:
+    return [NormalizedWorkResponse(**row) for row in read_repository.list_works(db.conn, limit, after)]
+
+
+@app.get("/v2/works/{work_id}", response_model=NormalizedWorkResponse)
+def normalized_work(work_id: int, db: CatalogueDB | PostgresCatalogueDB = Depends(get_db)) -> NormalizedWorkResponse:
+    row = read_repository.get_work(db.conn, work_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Work not found")
+    return NormalizedWorkResponse(**row)
+
+
+@app.get("/v2/editions/{edition_id}", response_model=NormalizedEditionResponse)
+def normalized_edition(edition_id: int, db: CatalogueDB | PostgresCatalogueDB = Depends(get_db)) -> NormalizedEditionResponse:
+    row = read_repository.get_edition(db.conn, edition_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Edition not found")
+    return NormalizedEditionResponse(**row)
+
+
+@app.get("/v2/documents/{document_id}", response_model=NormalizedDocumentResponse)
+def normalized_document(document_id: int, db: CatalogueDB | PostgresCatalogueDB = Depends(get_db)) -> NormalizedDocumentResponse:
+    row = read_repository.get_document(db.conn, document_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return NormalizedDocumentResponse(**row)
+
+
+@app.get("/v2/assets/{asset_id}", response_model=NormalizedAsset)
+def normalized_asset(asset_id: int, db: CatalogueDB | PostgresCatalogueDB = Depends(get_db)) -> NormalizedAsset:
+    row = read_repository.get_asset(db.conn, asset_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    return NormalizedAsset(**row)
+
+
+# ── Endpoints ──────────────────────────────────────────────────────
+
+@app.get("/v1/stats", response_model=StatsResponse)
+def stats(db: CatalogueDB = Depends(get_sqlite_db)) -> StatsResponse:
+    s = get_book_stats(db)
+    return StatsResponse(**s)  # type: ignore[arg-type]
+
+
+@app.get("/v1/books", response_model=BookListResponse)
+def list_books(
+    offset: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    author_id: int | None = Query(None),
+    language: str | None = Query(None),
+    db: CatalogueDB = Depends(get_sqlite_db),
+) -> BookListResponse:
+    books = db.list_books(offset=offset, limit=limit, author_id=author_id, language=language)
+    total = db.count_books(author_id=author_id, language=language)
+    return BookListResponse(
+        items=[BookResponse(id=b.id, title=b.title, **{k: v for k, v in b.__dict__.items() if k not in ("id", "title")}) for b in books],
+        total=total,
+        offset=offset,
+        limit=limit,
+    )
+
+
+@app.get("/v1/books/search", response_model=BookSearchResponse)
+def search_books_endpoint(
+    q: str = Query(..., min_length=1),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    db: CatalogueDB = Depends(get_sqlite_db),
+) -> BookSearchResponse:
+    results = search_books_with_authors(db, q, limit=limit, offset=offset)
+    items = []
+    for book, authors in results:
+        subjects = [s.name for s in db.get_book_subjects(book.id)]  # type: ignore[arg-type]
+        items.append(BookWithAuthorsResponse(
+            book=BookResponse(
+                id=book.id,
+                title=book.title,
+                title_sort=book.title_sort,
+                description=book.description,
+                language=book.language,
+                publisher=book.publisher,
+                isbn=book.isbn,
+                edition=book.edition,
+                source_date=book.source_date,
+                series=book.series,
+                series_index=book.series_index,
+                page_count=book.page_count,
+                cover_path=book.cover_path,
+                rokomari_url=book.rokomari_url,
+                google_books_id=book.google_books_id,
+                open_library_key=book.open_library_key,
+            ),
+            authors=[AuthorResponse(id=a.id, name=a.name, name_sort=a.name_sort) for a in authors],
+            subjects=subjects,
+        ))
+    return BookSearchResponse(items=items, total=len(items), query=q)
+
+
+@app.get("/v1/books/{book_id}", response_model=BookWithAuthorsResponse)
+def get_book(
+    book_id: int,
+    db: CatalogueDB = Depends(get_sqlite_db),
+) -> BookWithAuthorsResponse:
+    book = db.get_book(book_id)
+    if not book:
+        raise HTTPException(status_code=404, detail="Book not found")
+    authors = db.get_book_authors(book_id)
+    subjects = [s.name for s in db.get_book_subjects(book_id)]
+    return BookWithAuthorsResponse(
+        book=BookResponse(
+            id=book.id,
+            title=book.title,
+            title_sort=book.title_sort,
+            description=book.description,
+            language=book.language,
+            publisher=book.publisher,
+            isbn=book.isbn,
+            edition=book.edition,
+            source_date=book.source_date,
+            series=book.series,
+            series_index=book.series_index,
+            page_count=book.page_count,
+            cover_path=book.cover_path,
+            rokomari_url=book.rokomari_url,
+            google_books_id=book.google_books_id,
+            open_library_key=book.open_library_key,
+        ),
+        authors=[AuthorResponse(id=a.id, name=a.name, name_sort=a.name_sort) for a in authors],
+        subjects=subjects,
+    )
+
+
+@app.get("/v1/authors", response_model=list[AuthorResponse])
+def list_authors(
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    db: CatalogueDB = Depends(get_sqlite_db),
+) -> list[AuthorResponse]:
+    authors = db.list_authors(offset=offset, limit=limit)
+    return [AuthorResponse(id=a.id, name=a.name, name_sort=a.name_sort) for a in authors]
+
+
+@app.get("/v1/authors/{author_id}")
+def get_author(
+    author_id: int,
+    db: CatalogueDB = Depends(get_sqlite_db),
+) -> dict:
+    author = db.get_author(author_id)
+    if not author:
+        raise HTTPException(status_code=404, detail="Author not found")
+    books = db.get_author_books(author_id)
+    return {
+        "author": AuthorResponse(id=author.id, name=author.name, name_sort=author.name_sort),
+        "books": [BookResponse(id=b.id, title=b.title, **{k: v for k, v in b.__dict__.items() if k not in ("id", "title")}) for b in books],
+    }
+
+
+@app.post("/v1/reading-lists", response_model=ReadingListResponse)
+def create_reading_list(
+    data: ReadingListCreate,
+    db: CatalogueDB = Depends(get_sqlite_db),
+) -> ReadingListResponse:
+    from ..models import ReadingList
+    rl = ReadingList(user_id=data.user_id, name=data.name)
+    rl_id = db.create_reading_list(rl)
+    return ReadingListResponse(id=rl_id, user_id=data.user_id, name=data.name)
+
+
+@app.get("/v1/reading-lists/{list_id}/books", response_model=list[BookResponse])
+def get_reading_list_books(
+    list_id: int,
+    db: CatalogueDB = Depends(get_sqlite_db),
+) -> list[BookResponse]:
+    books = db.get_reading_list_books(list_id)
+    return [BookResponse(id=b.id, title=b.title, **{k: v for k, v in b.__dict__.items() if k not in ("id", "title")}) for b in books]
+
+
+@app.post("/v1/reading-lists/{list_id}/books")
+def add_book_to_list(
+    list_id: int,
+    book_id: int = Query(...),
+    db: CatalogueDB = Depends(get_sqlite_db),
+) -> dict:
+    db.add_book_to_reading_list(list_id, book_id)
+    return {"status": "added"}
+
+
+@app.post("/v1/bookmarks")
+def create_bookmark(
+    data: BookmarkCreate,
+    db: CatalogueDB = Depends(get_sqlite_db),
+) -> dict:
+    from ..models import Bookmark
+    bm = Bookmark(user_id=data.user_id, book_id=data.book_id, position=data.position, note=data.note)
+    bm_id = db.create_bookmark(bm)
+    return {"id": bm_id}
+
+
+@app.get("/v1/books/{book_id}/bookmarks")
+def get_book_bookmarks(
+    book_id: int,
+    user_id: int = Query(...),
+    db: CatalogueDB = Depends(get_sqlite_db),
+) -> list[dict]:
+    bookmarks = db.get_user_bookmarks(user_id, book_id)
+    return [{"id": b.id, "position": b.position, "note": b.note, "created_at": b.created_at} for b in bookmarks]
+
+
+@app.post("/v1/reviews")
+def upsert_review(
+    data: ReviewCreate,
+    db: CatalogueDB = Depends(get_sqlite_db),
+) -> dict:
+    from ..models import Review
+    rev = Review(user_id=data.user_id, book_id=data.book_id, rating=data.rating, text=data.text)
+    rev_id = db.upsert_review(rev)
+    return {"id": rev_id}
+
+
+@app.get("/v1/books/{book_id}/reviews")
+def get_book_reviews(
+    book_id: int,
+    db: CatalogueDB = Depends(get_sqlite_db),
+) -> list[dict]:
+    reviews = db.get_book_reviews(book_id)
+    return [{"id": r.id, "user_id": r.user_id, "rating": r.rating, "text": r.text, "created_at": r.created_at} for r in reviews]
+
+
+@app.post("/v1/progress")
+def update_progress(
+    data: ProgressUpdate,
+    db: CatalogueDB = Depends(get_sqlite_db),
+) -> dict:
+    from ..models import ReadingProgress
+    prog = ReadingProgress(user_id=data.user_id, book_id=data.book_id, position=data.position)
+    db.upsert_reading_progress(prog)
+    return {"status": "updated"}
+
+
+@app.get("/v1/progress/{user_id}/{book_id}")
+def get_progress(
+    user_id: int,
+    book_id: int,
+    db: CatalogueDB = Depends(get_sqlite_db),
+) -> dict | None:
+    prog = db.get_reading_progress(user_id, book_id)
+    if not prog:
+        return None
+    return {"position": prog.position, "updated_at": prog.updated_at}
+
+
+@app.post("/v1/favorites/{user_id}/{book_id}")
+def toggle_favorite(
+    user_id: int,
+    book_id: int,
+    db: CatalogueDB = Depends(get_sqlite_db),
+) -> dict:
+    added = db.toggle_favorite(user_id, book_id)
+    return {"favorited": added}
+
+
+@app.get("/v1/favorites/{user_id}", response_model=list[BookResponse])
+def get_favorites(
+    user_id: int,
+    db: CatalogueDB = Depends(get_sqlite_db),
+) -> list[BookResponse]:
+    books = db.get_user_favorites(user_id)
+    return [BookResponse(id=b.id, title=b.title, **{k: v for k, v in b.__dict__.items() if k not in ("id", "title")}) for b in books]
