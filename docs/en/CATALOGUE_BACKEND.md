@@ -127,6 +127,21 @@ Transfer metadata is stored in PostgreSQL. PostgreSQL data and local cluster
 files belong under `pdf-craft-output/`; do not place them in `data/` or commit
 them.
 
+The clean local database used for the current generated collection is
+`pdf_craft_catalogue`:
+
+```bash
+PGROOT=/scratch/mdra00001/conda/envs/pdf-craft-postgres
+"$PGROOT/bin/createdb" -h 127.0.0.1 -p 55432 pdf_craft_catalogue
+python -m pdf_craft.catalogue.cli postgres-init \
+  --dsn postgresql://127.0.0.1:55432/pdf_craft_catalogue
+python -m pdf_craft.catalogue.cli transfer-postgres \
+  --db pdf-craft-output/catalogue/catalogue.db \
+  --dsn postgresql://127.0.0.1:55432/pdf_craft_catalogue
+```
+
+The transferred database currently contains 2,987 indexed local documents.
+
 ## Useful SQLite commands
 
 Run the CLI as a module from the repository root:
