@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import tempfile
 from pathlib import Path
 
 from pdf_craft.catalogue.database import CatalogueDB
@@ -9,7 +8,6 @@ from pdf_craft.catalogue.importers.rokomari import (
     import_rokomari_from_file,
     stage_rokomari_from_file,
 )
-from pdf_craft.catalogue.models import Book
 
 
 def _make_rokomari_record(
@@ -59,8 +57,7 @@ class TestRokomariImport:
         ]
         jsonl_path = tmp_path / "rokomari.jsonl"
         with open(jsonl_path, "w", encoding="utf-8") as f:
-            for rec in records:
-                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            f.writelines(json.dumps(rec, ensure_ascii=False) + "\n" for rec in records)
 
         db_path = tmp_path / "test.db"
         db = CatalogueDB(db_path)
@@ -86,8 +83,7 @@ class TestRokomariImport:
         ]
         jsonl_path = tmp_path / "rokomari.jsonl"
         with open(jsonl_path, "w", encoding="utf-8") as f:
-            for rec in records:
-                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            f.writelines(json.dumps(rec, ensure_ascii=False) + "\n" for rec in records)
 
         db_path = tmp_path / "test.db"
         db = CatalogueDB(db_path)
@@ -103,8 +99,7 @@ class TestRokomariImport:
         ]
         jsonl_path = tmp_path / "rokomari.jsonl"
         with open(jsonl_path, "w", encoding="utf-8") as f:
-            for rec in records:
-                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            f.writelines(json.dumps(rec, ensure_ascii=False) + "\n" for rec in records)
 
         db_path = tmp_path / "test.db"
         db = CatalogueDB(db_path)
@@ -121,8 +116,7 @@ class TestRokomariImport:
         ]
         jsonl_path = tmp_path / "rokomari.jsonl"
         with open(jsonl_path, "w", encoding="utf-8") as f:
-            for rec in records:
-                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            f.writelines(json.dumps(rec, ensure_ascii=False) + "\n" for rec in records)
 
         db_path = tmp_path / "test.db"
         db = CatalogueDB(db_path)
@@ -139,8 +133,7 @@ class TestRokomariImport:
         ]
         jsonl_path = tmp_path / "rokomari.jsonl"
         with open(jsonl_path, "w", encoding="utf-8") as f:
-            for rec in records:
-                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            f.writelines(json.dumps(rec, ensure_ascii=False) + "\n" for rec in records)
 
         db_path = tmp_path / "test.db"
         db = CatalogueDB(db_path)
@@ -173,4 +166,62 @@ class TestRokomariImport:
             "SELECT raw_json FROM catalogue_source_records"
         ).fetchone()[0]
         assert json.loads(raw)["name"] == record["name"]
+        db.close()
+
+    def test_staging_skips_missing_or_invalid_specifications_and_non_books(self, tmp_path: Path) -> None:
+        valid = _make_rokomari_record("Valid book", "Author")
+        missing_spec = {"productType": "book", "name": "Pseudo book from page metadata"}
+        invalid_spec = {"productType": "book", "name": "Malformed specification", "specification": "not-json"}
+        untitled_spec = {
+            "productType": "book", "name": "Fallback name must not be used",
+            "specification": {"Author": "Author"},
+        }
+        non_book = {
+            "productType": "author_page", "name": "Author page",
+            "specification": {"Title": "Author page"},
+        }
+        jsonl_path = tmp_path / "rokomari.jsonl"
+        jsonl_path.write_text(
+            "\n".join(json.dumps(row, ensure_ascii=False) for row in (
+                valid, missing_spec, invalid_spec, untitled_spec, non_book,
+            )) + "\n",
+            encoding="utf-8",
+        )
+
+        db = CatalogueDB(tmp_path / "test.db")
+        staged, skipped = stage_rokomari_from_file(db, jsonl_path, batch_size=2)
+
+        assert (staged, skipped) == (1, 4)
+        assert db.conn.execute("SELECT COUNT(*) FROM catalogue_source_records").fetchone()[0] == 1
+        snapshot = db.conn.execute(
+            "SELECT payload_json FROM catalogue_source_snapshots WHERE source='rokomari'"
+        ).fetchone()
+        assert json.loads(snapshot[0])["path"] == str(jsonl_path)
+        assert jsonl_path.exists()
+        db.close()
+
+    def test_staging_resume_checkpoint_skips_committed_lines(self, tmp_path: Path) -> None:
+        records = [_make_rokomari_record(f"Book {index}", "Author") for index in range(3)]
+        jsonl_path = tmp_path / "rokomari.jsonl"
+        jsonl_path.write_text(
+            "\n".join(json.dumps(row, ensure_ascii=False) for row in records) + "\n",
+            encoding="utf-8",
+        )
+        db = CatalogueDB(tmp_path / "test.db")
+
+        def fail_once(_cursor: int, _staged: int) -> None:
+            raise RuntimeError("simulated staging interruption")
+
+        try:
+            stage_rokomari_from_file(db, jsonl_path, batch_size=1, on_batch=fail_once)
+        except RuntimeError as error:
+            assert str(error) == "simulated staging interruption"
+        else:
+            raise AssertionError("failure callback did not fire")
+        assert stage_rokomari_from_file(db, jsonl_path, batch_size=1) == (3, 0)
+        assert db.conn.execute("SELECT COUNT(*) FROM catalogue_source_records").fetchone()[0] == 3
+        checkpoint = db.conn.execute(
+            "SELECT cursor FROM catalogue_import_checkpoints WHERE checkpoint_key='records'"
+        ).fetchone()
+        assert checkpoint[0] == "3"
         db.close()

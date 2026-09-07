@@ -292,24 +292,25 @@ def stage_rokomari_from_file(
                     if not isinstance(record, dict):
                         skipped += 1
                     else:
-                        spec = record.get("specification")
-                        if isinstance(spec, str):
-                            try:
-                                spec = json.loads(spec)
-                            except json.JSONDecodeError:
-                                spec = {}
-                        if not isinstance(spec, dict):
-                            spec = {}
-                        title = spec.get("Title") or record.get("name")
-                        if record.get("productType") not in (None, "book") or not isinstance(title, str) or not title.strip():
+                        if record.get("productType") != "book":
                             skipped += 1
                         else:
-                            external_id = record.get("id") or record.get("productId") or record.get("sku") or record.get("url") or f"line:{line_number}"
-                            inserted = db.conn.execute(
-                                "INSERT OR IGNORE INTO catalogue_source_records (snapshot_id, source, external_id, record_type, title, raw_json) VALUES (?, 'rokomari', ?, 'edition', ?, ?)",
-                                (snapshot.id, str(external_id), title.strip(), json.dumps(record, ensure_ascii=False, sort_keys=True)),
-                            )
-                            staged += int(inserted.rowcount > 0)
+                            spec = record.get("specification")
+                            if isinstance(spec, str):
+                                try:
+                                    spec = json.loads(spec)
+                                except (TypeError, json.JSONDecodeError):
+                                    spec = None
+                            title = spec.get("Title") if isinstance(spec, dict) else None
+                            if not isinstance(title, str) or not title.strip():
+                                skipped += 1
+                            else:
+                                external_id = record.get("id") or record.get("productId") or record.get("sku") or record.get("url") or f"line:{line_number}"
+                                inserted = db.conn.execute(
+                                    "INSERT OR IGNORE INTO catalogue_source_records (snapshot_id, source, external_id, record_type, title, raw_json) VALUES (?, 'rokomari', ?, 'edition', ?, ?)",
+                                    (snapshot.id, str(external_id), title.strip(), json.dumps(record, ensure_ascii=False, sort_keys=True)),
+                                )
+                                staged += int(inserted.rowcount > 0)
                 if (line_number - cursor) % batch_size == 0:
                     db.conn.execute("INSERT INTO catalogue_import_checkpoints (import_run_id, checkpoint_key, cursor, state_json) VALUES (?, 'records', ?, ?) ON CONFLICT(import_run_id, checkpoint_key) DO UPDATE SET cursor=excluded.cursor, state_json=excluded.state_json, updated_at=datetime('now')", (run.id, line_number, json.dumps({"staged": staged, "skipped": skipped})))
                     db.conn.commit()

@@ -293,10 +293,18 @@ CREATE TABLE IF NOT EXISTS catalogue_artifacts (
 );
 
 CREATE INDEX IF NOT EXISTS idx_catalogue_editions_work ON catalogue_editions(work_id);
+CREATE INDEX IF NOT EXISTS idx_catalogue_editions_title
+    ON catalogue_editions(title);
+CREATE INDEX IF NOT EXISTS idx_catalogue_edition_people_person_role
+    ON catalogue_edition_people(person_id, role, edition_id);
+CREATE INDEX IF NOT EXISTS idx_catalogue_works_sort_title
+    ON catalogue_works(sort_title);
 CREATE INDEX IF NOT EXISTS idx_catalogue_identifiers_lookup
     ON catalogue_identifiers(namespace, normalized_value);
 CREATE INDEX IF NOT EXISTS idx_catalogue_source_records_source
     ON catalogue_source_records(source, external_id);
+CREATE INDEX IF NOT EXISTS idx_catalogue_source_records_source_id
+    ON catalogue_source_records(source, id);
 CREATE INDEX IF NOT EXISTS idx_catalogue_assertions_entity
     ON catalogue_metadata_assertions(entity_type, entity_id, field_name, status);
 CREATE INDEX IF NOT EXISTS idx_catalogue_documents_path
@@ -391,6 +399,15 @@ _ASSET_COLUMNS = {
     "metadata_json": "TEXT NOT NULL DEFAULT '{}'",
 }
 
+_CATALOGUE_WORK_COLUMNS = {
+    "subtitle": "TEXT",
+    "sort_title": "TEXT",
+    "language": "TEXT",
+    "description": "TEXT",
+    "created_at": "TEXT",
+    "updated_at": "TEXT",
+}
+
 
 def _read_existing_schema_version(conn: sqlite3.Connection) -> int | None:
     schema_table = conn.execute(
@@ -414,6 +431,20 @@ def _ensure_fts(conn: sqlite3.Connection) -> None:
 
 def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
     return any(row[1] == column for row in conn.execute(f"PRAGMA table_info({table})"))
+
+
+def _ensure_catalogue_work_columns(conn: sqlite3.Connection) -> None:
+    """Repair a partially-created v2 works table before its indexes replay."""
+    existing = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='catalogue_works'"
+    ).fetchone()
+    if existing is None:
+        return
+    for column, definition in _CATALOGUE_WORK_COLUMNS.items():
+        if not _has_column(conn, "catalogue_works", column):
+            conn.execute(
+                f"ALTER TABLE catalogue_works ADD COLUMN {column} {definition}"
+            )
 
 
 def _ensure_v3(conn: sqlite3.Connection) -> None:
@@ -481,12 +512,14 @@ def initialize_database(db_path: str | Path) -> sqlite3.Connection:
 
     current_version = int(existing[0])
     if current_version < 2:
+        _ensure_catalogue_work_columns(conn)
         conn.executescript(_V2_DDL)
         conn.execute("UPDATE schema_version SET version = 2")
         current_version = 2
     else:
         # Versioned databases can be interrupted between DDL statements.
         # Replaying CREATE IF NOT EXISTS repairs those partial installations.
+        _ensure_catalogue_work_columns(conn)
         conn.executescript(_V2_DDL)
     _ensure_v3(conn)
     _ensure_assets(conn)

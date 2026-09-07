@@ -30,8 +30,12 @@ def test_postgres_dsn_resolution_is_explicit(monkeypatch: pytest.MonkeyPatch) ->
 
 
 def test_postgres_migrations_are_separate_and_ordered() -> None:
-    assert [migration.version for migration in _MIGRATIONS] == [1, 2, 3, 4]
+    assert [migration.version for migration in _MIGRATIONS] == [1, 2, 3, 4, 5, 6]
     assert _MIGRATIONS[-1].version == POSTGRES_SCHEMA_VERSION
+    assert "idx_catalogue_works_sort_title" in _MIGRATIONS[4].sql
+    assert "idx_catalogue_source_records_source_id" in _MIGRATIONS[4].sql
+    assert "idx_catalogue_editions_title" in _MIGRATIONS[-1].sql
+    assert "idx_catalogue_edition_people_person_role" in _MIGRATIONS[-1].sql
     assert "sqlite_master" not in "".join(migration.sql for migration in _MIGRATIONS)
     assert "catalogue_schema_migrations" not in _MIGRATIONS[0].sql
 

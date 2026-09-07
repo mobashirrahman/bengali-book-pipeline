@@ -4,6 +4,8 @@ import gzip
 import json
 from pathlib import Path
 
+import pytest
+
 from pdf_craft.catalogue.database import CatalogueDB
 from pdf_craft.catalogue.importers.open_library import stage_open_library_dump
 from pdf_craft.catalogue.importers.rokomari import stage_rokomari_from_file
@@ -89,9 +91,129 @@ def test_source_parsers_normalize_google_and_rokomari_shapes() -> None:
     assert rokomari.isbns == ("9780306406157",)
 
 
+def _realistic_rokomari_record(title: str = "শেষের কবিতা", identifier: str = "rk-42") -> dict[str, object]:
+    return {
+        "id": identifier,
+        "url": f"https://www.rokomari.com/book/{identifier}",
+        "name": title,
+        "productType": "book",
+        "description": "A preserved Rokomari description.",
+        "authors": ["Noisy page-level author", "Another noisy value"],
+        "publishers": ["Noisy publisher list"],
+        "image": "https://images.rokomari.com/book-cover.jpg",
+        "category": "বাংলা উপন্যাস",
+        "specification": json.dumps({
+            "Title": title,
+            "Author": "রবীন্দ্রনাথ ঠাকুর",
+            "Author/Editor": ["সম্পাদক নাম"],
+            "Publisher": "বিশ্বসাহিত্য ভবন",
+            "ISBN": "978-0-306-40615-7",
+            "Edition": "1st",
+            "Number of Pages": "240 pages",
+            "Language": "বাংলা",
+        }, ensure_ascii=False),
+    }
+
+
+def test_rokomari_parser_prefers_specific_authors_and_preserves_fidelity() -> None:
+    item = parse_source_record("rokomari", _realistic_rokomari_record(), external_id="rk-42")
+
+    assert item.authors == ("সম্পাদক নাম", "রবীন্দ্রনাথ ঠাকুর")
+    assert item.publisher == "বিশ্বসাহিত্য ভবন"
+    assert item.language == "বাংলা"
+    assert item.page_count == 240
+    assert item.isbns == ("9780306406157",)
+    assert item.cover_urls == ("https://images.rokomari.com/book-cover.jpg",)
+    assert item.source_url == "https://www.rokomari.com/book/rk-42"
+    assert item.subjects == ("বাংলা উপন্যাস",)
+    assert ("rokomari", "rk-42") in item.external_identifiers
+    assert ("rokomari:id", "rk-42") in item.external_identifiers
+
+
+def test_rokomari_materialization_is_provenant_and_idempotent(tmp_path: Path) -> None:
+    path = tmp_path / "rokomari.jsonl"
+    path.write_text(json.dumps(_realistic_rokomari_record(), ensure_ascii=False) + "\n", encoding="utf-8")
+    db = CatalogueDB(tmp_path / "catalogue.db")
+
+    assert stage_rokomari_from_file(db, path, batch_size=1) == (1, 0)
+    assert materialize_source_records(db, source="rokomari", batch_size=1) == {
+        "seen": 1, "materialized": 1, "skipped": 0,
+    }
+    edition = db.conn.execute(
+        """SELECT e.* FROM catalogue_editions e
+           JOIN catalogue_source_record_editions sre ON sre.edition_id=e.id
+           WHERE sre.source_record_id=1"""
+    ).fetchone()
+    assert edition["publisher"] == "বিশ্বসাহিত্য ভবন"
+    assert edition["language"] == "বাংলা"
+    assert edition["page_count"] == 240
+    assert [tuple(row) for row in db.conn.execute(
+        "SELECT name FROM catalogue_people ORDER BY id"
+    ).fetchall()] == [("সম্পাদক নাম",), ("রবীন্দ্রনাথ ঠাকুর",)]
+    assert [tuple(row) for row in db.conn.execute(
+        "SELECT namespace, value FROM catalogue_identifiers ORDER BY namespace"
+    ).fetchall()] == [
+        ("isbn", "9780306406157"),
+        ("rokomari", "rk-42"),
+        ("rokomari:id", "rk-42"),
+    ]
+    cover = db.conn.execute(
+        "SELECT source_url, source_record_id FROM catalogue_assets WHERE edition_id=?",
+        (edition["id"],),
+    ).fetchone()
+    assert tuple(cover) == ("https://images.rokomari.com/book-cover.jpg", 1)
+    assertions = {
+        row[0]: json.loads(row[1])
+        for row in db.conn.execute(
+            "SELECT field_name, value_json FROM catalogue_metadata_assertions WHERE source_record_id=1"
+        )
+    }
+    assert assertions["source_url"] == "https://www.rokomari.com/book/rk-42"
+    assert assertions["subject"] == "বাংলা উপন্যাস"
+    assert assertions["cover_url"] == "https://images.rokomari.com/book-cover.jpg"
+    assert materialize_source_records(db, source="rokomari", batch_size=1) == {
+        "seen": 1, "materialized": 0, "skipped": 0,
+    }
+    assert db.conn.execute("SELECT COUNT(*) FROM catalogue_assets").fetchone()[0] == 1
+    db.close()
+
+
+def test_materialization_resumes_after_a_committed_batch(tmp_path: Path) -> None:
+    path = tmp_path / "rokomari.jsonl"
+    rows = [_realistic_rokomari_record(f"Book {index}", f"rk-{index}") for index in range(3)]
+    path.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n", encoding="utf-8")
+    db = CatalogueDB(tmp_path / "catalogue.db")
+    assert stage_rokomari_from_file(db, path, batch_size=1) == (3, 0)
+
+    def fail_after_first_batch(cursor: int, _materialized: int) -> None:
+        if cursor == 1:
+            raise RuntimeError("simulated materialization interruption")
+
+    with pytest.raises(RuntimeError, match="interruption"):
+        materialize_source_records(db, source="rokomari", batch_size=1, on_batch=fail_after_first_batch)
+    assert db.conn.execute("SELECT COUNT(*) FROM catalogue_source_record_editions").fetchone()[0] == 1
+    checkpoint = db.conn.execute(
+        """SELECT c.cursor FROM catalogue_import_checkpoints c
+           JOIN catalogue_import_runs r ON r.id=c.import_run_id
+           WHERE r.source='catalogue_materialization'"""
+    ).fetchone()
+    assert checkpoint[0] == "1"
+    assert materialize_source_records(db, source="rokomari", batch_size=1) == {
+        "seen": 3, "materialized": 2, "skipped": 0,
+    }
+    assert materialize_source_records(db, source="rokomari", batch_size=1) == {
+        "seen": 3, "materialized": 0, "skipped": 0,
+    }
+    assert db.conn.execute("SELECT COUNT(*) FROM catalogue_source_record_editions").fetchone()[0] == 3
+    db.close()
+
+
 def test_rokomari_resume_after_committed_batch_failure(tmp_path: Path) -> None:
     path = tmp_path / "rokomari.jsonl"
-    rows = [{"id": str(i), "productType": "book", "name": f"Book {i}"} for i in range(3)]
+    rows = [{
+        "id": str(i), "productType": "book", "name": f"Book {i}",
+        "specification": {"Title": f"Book {i}"},
+    } for i in range(3)]
     path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
     db = CatalogueDB(tmp_path / "catalogue.db")
 

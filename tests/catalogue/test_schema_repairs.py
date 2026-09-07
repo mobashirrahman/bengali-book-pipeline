@@ -28,6 +28,36 @@ def test_version_two_partial_database_replays_catalogue_ddl(tmp_path: Path) -> N
         assert db.conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
         ).fetchone()
+    columns = {
+        row[1]
+        for row in db.conn.execute("PRAGMA table_info(catalogue_works)")
+    }
+    assert {"subtitle", "sort_title", "language", "description", "created_at", "updated_at"} <= columns
+    db.close()
+
+
+def test_catalogue_works_sort_title_index_exists(tmp_path: Path) -> None:
+    db = CatalogueDB(tmp_path / "catalogue.db")
+
+    indexes = {
+        row[0]
+        for row in db.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name IN (?, ?, ?, ?)",
+            (
+                "idx_catalogue_works_sort_title",
+                "idx_catalogue_source_records_source_id",
+                "idx_catalogue_editions_title",
+                "idx_catalogue_edition_people_person_role",
+            ),
+        )
+    }
+
+    assert indexes == {
+        "idx_catalogue_works_sort_title",
+        "idx_catalogue_source_records_source_id",
+        "idx_catalogue_editions_title",
+        "idx_catalogue_edition_people_person_role",
+    }
     db.close()
 
 

@@ -97,11 +97,16 @@ they become the selected display value. ISBNs are normalized and validated;
 title and author matching is a candidate-generation step with explicit
 accept/reject decisions.
 
-The repository does not contain a licensed 300k-plus Rokomari export. A bulk
-import must receive an explicit local export or an authorized API response.
-The importers are resumable and preserve rejected or malformed records for
-reporting. They must not silently fabricate records or scrape an unavailable
-dataset.
+The repository does not contain a licensed 300k-plus Rokomari export. The
+public `sayurio/rokomari-bd-product-data` dataset is described as
+noncommercial; its raw records and images remain subject to the dataset's
+license, source-site terms, and any third-party rights. Check those terms
+before use, keep the dataset URL, access date, checksum, and any permission
+record with the snapshot, and do not treat this repository's MIT license as a
+license for the raw dataset or its covers. A bulk import must receive an
+explicit local export or an authorized API response. The importers are
+resumable and preserve rejected or malformed records for reporting. They must
+not silently fabricate records or scrape an unavailable dataset.
 
 Cover URLs are registered as candidates first. Downloads are bounded and
 stored by content hash, duplicate bytes are linked to their provenance, and a
@@ -160,7 +165,13 @@ Stage supplied source files before materializing them:
 
 ```bash
 python -m pdf_craft.catalogue.cli stage-rokomari \
-  --db pdf-craft-output/catalogue/catalogue.db --file rokomari.jsonl
+  --db pdf-craft-output/catalogue/catalogue.db \
+  --file /path/to/rokomari-bd-product-data.jsonl \
+  --snapshot-key sayurio-rokomari-bd-product-data \
+  --batch-size 1000
+python -m pdf_craft.catalogue.cli materialize-source \
+  --db pdf-craft-output/catalogue/catalogue.db \
+  --source rokomari --batch-size 500
 python -m pdf_craft.catalogue.cli stage-google \
   --db pdf-craft-output/catalogue/catalogue.db --file google-response.json
 python -m pdf_craft.catalogue.cli stage-openlibrary-dump \

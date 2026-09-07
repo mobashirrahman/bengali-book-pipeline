@@ -22,7 +22,7 @@ except ImportError:  # pragma: no cover - exercised by environments without the 
     dict_row = None  # type: ignore[assignment]
 
 
-POSTGRES_SCHEMA_VERSION = 4
+POSTGRES_SCHEMA_VERSION = 6
 POSTGRES_STATEMENT_TIMEOUT_MS = 5_000
 POSTGRES_ADVISORY_LOCK_KEY = 7_861_041_223
 POSTGRES_CLIENT_ENCODING = "UTF8"
@@ -290,6 +290,26 @@ _MIGRATIONS = (
             updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text),
             PRIMARY KEY(transfer_run_id, table_name)
         );
+        """,
+    ),
+    Migration(
+        5,
+        "work_sort_title_lookup",
+        """
+        CREATE INDEX idx_catalogue_works_sort_title
+            ON catalogue_works(sort_title);
+        CREATE INDEX idx_catalogue_source_records_source_id
+            ON catalogue_source_records(source, id);
+        """,
+    ),
+    Migration(
+        6,
+        "matcher_lookup_indexes",
+        """
+        CREATE INDEX idx_catalogue_editions_title
+            ON catalogue_editions(title);
+        CREATE INDEX idx_catalogue_edition_people_person_role
+            ON catalogue_edition_people(person_id, role, edition_id);
         """,
     ),
 )

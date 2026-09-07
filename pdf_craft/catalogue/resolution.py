@@ -4,101 +4,300 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from .database import CatalogueDB
 from .isbn import normalize_isbn
-from .matching import fuzzy_match_score, infer_author_from_path, infer_title_from_path
+from .matching import (
+    fuzzy_match_score,
+    infer_author_from_path,
+    infer_title_from_path,
+    normalize_bengali,
+)
+
+MATCHER_VERSION = "catalogue-resolution-v2"
+_FUZZY_POOL_LIMIT = 100
+_FUZZY_PERSIST_LIMIT = 10
+_EXACT_POOL_LIMIT = 100
+
+
+@dataclass(frozen=True)
+class _CanonicalEdition:
+    id: int
+    title: str
+    authors: tuple[str, ...]
+    normalized_authors: tuple[str, ...]
+    isbns: tuple[str, ...]
 
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _source_fields(raw: dict[str, object], title: str | None) -> tuple[str, str, list[str]]:
-    info = raw.get("volumeInfo") if isinstance(raw.get("volumeInfo"), dict) else raw
-    assert isinstance(info, dict)
-    source_title = str(info.get("title") or title or "").strip()
-    authors = info.get("authors") or info.get("author") or []
-    if isinstance(authors, str):
-        authors = [authors]
-    authors = [str(author).strip() for author in authors if str(author).strip()] if isinstance(authors, list) else []
-    identifiers = info.get("industryIdentifiers") or []
-    isbns: list[str] = []
-    if isinstance(identifiers, list):
-        for identifier in identifiers:
-            if isinstance(identifier, dict) and identifier.get("identifier"):
-                try:
-                    isbns.append(normalize_isbn(str(identifier["identifier"])))
-                except ValueError:
-                    continue
-    for key in ("isbn", "ISBN"):
-        if info.get(key):
-            try:
-                isbns.append(normalize_isbn(str(info[key])))
-            except ValueError:
-                pass
-    return source_title, " ".join(authors), sorted(set(isbns))
-
-
-def _ensure_edition(db: CatalogueDB, record_id: int, title: str, raw: dict[str, object], authors: str, isbns: list[str]) -> int:
-    row = db.conn.execute("SELECT edition_id FROM catalogue_source_record_editions WHERE source_record_id=?", (record_id,)).fetchone()
-    if row:
-        return int(row[0])
-    cur = db.conn.execute("INSERT INTO catalogue_editions (title, publisher, language) VALUES (?, ?, ?)", (title, raw.get("volumeInfo", {}).get("publisher") if isinstance(raw.get("volumeInfo"), dict) else None, raw.get("volumeInfo", {}).get("language") if isinstance(raw.get("volumeInfo"), dict) else None))
-    edition_id = int(cur.lastrowid)
-    db.conn.execute("INSERT INTO catalogue_source_record_editions (source_record_id, edition_id) VALUES (?, ?)", (record_id, edition_id))
-    for isbn in isbns:
-        db.conn.execute("INSERT OR IGNORE INTO catalogue_identifiers (entity_type, entity_id, namespace, value, normalized_value) VALUES ('edition', ?, 'isbn', ?, ?)", (edition_id, isbn, isbn))
-    for position, author in enumerate(authors.split(" | ") if " | " in authors else ([authors] if authors else [])):
-        normalized = re.sub(r"\s+", " ", author).strip().lower()
-        person = db.conn.execute("SELECT id FROM catalogue_people WHERE normalized_name=?", (normalized,)).fetchone()
-        if not person:
-            person = (db.conn.execute("INSERT INTO catalogue_people (name, normalized_name) VALUES (?, ?)", (author, normalized)).lastrowid,)
-        db.conn.execute("INSERT OR IGNORE INTO catalogue_edition_people (edition_id, person_id, role, position) VALUES (?, ?, 'author', ?)", (edition_id, person[0], position))
-    db.conn.commit()
-    return edition_id
-
-
 def generate_candidates(db: CatalogueDB, document_id: int) -> list[int]:
-    """Persist pending candidates for a local document and return their IDs."""
+    """Persist reviewable candidates from canonical catalogue entities only."""
     document = db.conn.execute("SELECT * FROM catalogue_local_documents WHERE id=?", (document_id,)).fetchone()
     if not document:
         raise ValueError(f"unknown local document: {document_id}")
-    metadata = json.loads(document["metadata_json"] or "{}")
-    local_title = str(metadata.get("title") or infer_title_from_path(document["source_path"])).strip()
-    local_author = str(metadata.get("author") or infer_author_from_path(document["source_path"])).strip()
-    local_isbns: set[str] = set()
-    for value in ([metadata.get("isbn")] if metadata.get("isbn") else []) + list(metadata.get("isbns", [])):
-        try:
-            local_isbns.add(normalize_isbn(str(value)))
-        except (ValueError, TypeError):
-            continue
+    local_title, local_authors, local_isbns = _document_fields(document)
+    title_key = _normalized_name(local_title)
+    author_keys = {_normalized_name(author) for author in local_authors if _normalized_name(author)}
+    exact_isbn_ids = _ids_by_isbn(db, local_isbns)
+    title_ids = _ids_by_title(db, title_key, local_title)
+    author_ids = _ids_by_authors(db, author_keys)
+    exact_ids = list(dict.fromkeys(exact_isbn_ids + title_ids + author_ids))
+    canonical = _load_canonical_editions(db, exact_ids)
     candidates: list[int] = []
-    rows = db.conn.execute("SELECT id, title, raw_json FROM catalogue_source_records ORDER BY id").fetchall()
-    for record in rows:
-        raw = json.loads(record["raw_json"])
-        title, author, isbns = _source_fields(raw, record["title"])
-        shared = sorted(local_isbns.intersection(isbns))
-        if shared:
-            score, method, evidence = 1.0, "isbn", {"isbn": shared, "signals": ["exact_isbn"]}
-        else:
-            title_score = fuzzy_match_score(local_title, title)
-            author_score = fuzzy_match_score(local_author, author) if local_author and author else 0.0
-            if title_score < 0.75 or (local_author and author and author_score < 0.55):
-                continue
-            score = min(1.0, 0.75 * title_score + (0.25 * author_score if local_author and author else 0.0))
-            method = "title_author" if local_author and author else "title"
-            evidence = {"title_score": title_score, "author_score": author_score, "signals": [method]}
-        edition_id = _ensure_edition(db, int(record["id"]), title, raw, author, isbns)
-        existing = db.conn.execute("SELECT id, status FROM catalogue_document_matches WHERE document_id=? AND edition_id=?", (document_id, edition_id)).fetchone()
-        if existing:
-            candidates.append(int(existing[0]))
+    selected: set[int] = set()
+
+    for edition_id in exact_isbn_ids:
+        item = canonical.get(edition_id)
+        if item is None:
             continue
-        cur = db.conn.execute("INSERT INTO catalogue_document_matches (document_id, edition_id, score, method, status, evidence_json) VALUES (?, ?, ?, ?, 'candidate', ?)", (document_id, edition_id, score, method, json.dumps(evidence, ensure_ascii=False, sort_keys=True)))
-        candidates.append(int(cur.lastrowid))
+        shared = sorted(set(local_isbns).intersection(item.isbns))
+        candidates.append(_persist_candidate(
+            db, document_id, edition_id, 1.0, "exact_isbn",
+            {"matcher_version": MATCHER_VERSION, "signals": ["exact_isbn"], "isbn": shared},
+        ))
+        selected.add(edition_id)
+
+    for edition_id in title_ids:
+        item = canonical.get(edition_id)
+        if item is None or edition_id in selected:
+            continue
+        author_exact = bool(author_keys.intersection(item.normalized_authors))
+        score = 1.0 if author_exact else 0.8
+        method = "exact_title_author" if author_exact else "exact_title"
+        signals = ["exact_title"] + (["exact_author"] if author_exact else [])
+        candidates.append(_persist_candidate(
+            db, document_id, edition_id, score, method,
+            {
+                "matcher_version": MATCHER_VERSION,
+                "signals": signals,
+                "title_score": 1.0,
+                "author_score": 1.0 if author_exact else 0.0,
+            },
+        ))
+        selected.add(edition_id)
+
+    for edition_id in author_ids:
+        item = canonical.get(edition_id)
+        if item is None or edition_id in selected:
+            continue
+        candidates.append(_persist_candidate(
+            db, document_id, edition_id, 0.2, "exact_author",
+            {
+                "matcher_version": MATCHER_VERSION,
+                "signals": ["exact_author"],
+                "title_score": 0.0,
+                "author_score": 1.0,
+            },
+        ))
+        selected.add(edition_id)
+
+    fuzzy_ids = _fuzzy_pool_ids(db, title_key, author_keys, selected, local_title)
+    fuzzy_candidates = _load_canonical_editions(db, fuzzy_ids)
+    scored: list[tuple[float, int, dict[str, object]]] = []
+    for edition_id in fuzzy_ids[:_FUZZY_POOL_LIMIT]:
+        item = fuzzy_candidates.get(edition_id)
+        if item is None:
+            continue
+        candidate_author = " | ".join(item.authors)
+        title_score = fuzzy_match_score(local_title, item.title)
+        author_score = fuzzy_match_score(" | ".join(local_authors), candidate_author) if local_authors and candidate_author else 0.0
+        score = 0.8 * title_score + 0.2 * author_score
+        if title_score < 0.55 or (local_authors and candidate_author and author_score < 0.4):
+            continue
+        scored.append((score, edition_id, {
+            "matcher_version": MATCHER_VERSION,
+            "signals": ["fuzzy_title_author" if local_authors and candidate_author else "fuzzy_title"],
+            "title_score": title_score,
+            "author_score": author_score,
+        }))
+    for score, edition_id, evidence in sorted(scored, key=lambda value: (-value[0], value[1]))[:_FUZZY_PERSIST_LIMIT]:
+        candidates.append(_persist_candidate(db, document_id, edition_id, score, "fuzzy", evidence))
     db.conn.commit()
     return candidates
+
+
+def _document_fields(document: object) -> tuple[str, tuple[str, ...], set[str]]:
+    try:
+        metadata = json.loads(document["metadata_json"] or "{}")  # type: ignore[index]
+    except (TypeError, json.JSONDecodeError):
+        metadata = {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    title = _text(metadata.get("title")) or infer_title_from_path(document["source_path"])  # type: ignore[index]
+    author_value = metadata.get("author") or metadata.get("authors")
+    authors = tuple(_strings(author_value))
+    if not authors:
+        fallback = infer_author_from_path(document["source_path"])  # type: ignore[index]
+        authors = (fallback,) if fallback else ()
+    isbn_values: list[object] = []
+    for key in ("isbn", "isbns", "isbn13", "isbn_13"):
+        value = metadata.get(key)
+        isbn_values.extend(value if isinstance(value, list) else [value] if value else [])
+    isbns: set[str] = set()
+    for value in isbn_values:
+        try:
+            isbns.add(normalize_isbn(str(value)))
+        except (TypeError, ValueError):
+            continue
+    return title.strip(), authors, isbns
+
+
+def _ids_by_isbn(db: CatalogueDB, isbns: set[str]) -> list[int]:
+    if not isbns:
+        return []
+    placeholders = ", ".join("?" for _ in isbns)
+    rows = db.conn.execute(
+        "SELECT entity_id FROM catalogue_identifiers WHERE entity_type='edition' AND namespace='isbn' AND normalized_value IN (" + placeholders + ") ORDER BY entity_id LIMIT ?",
+        tuple(sorted(isbns)) + (_EXACT_POOL_LIMIT,),
+    ).fetchall()
+    return [int(row[0]) for row in rows]
+
+
+def _ids_by_title(db: CatalogueDB, title_key: str, title: str) -> list[int]:
+    if not title_key:
+        return []
+    work_rows = db.conn.execute(
+        """SELECT e.id
+           FROM catalogue_editions e
+           WHERE e.work_id IN (
+               SELECT w.id FROM catalogue_works w WHERE w.sort_title=?
+           )
+           ORDER BY e.id LIMIT ?""",
+        (title_key, _EXACT_POOL_LIMIT),
+    ).fetchall()
+    title_rows = db.conn.execute(
+        "SELECT id FROM catalogue_editions WHERE title=? ORDER BY id LIMIT ?",
+        (title, _EXACT_POOL_LIMIT),
+    ).fetchall()
+    return sorted(
+        {int(row[0]) for row in (*work_rows, *title_rows)}
+    )[:_EXACT_POOL_LIMIT]
+
+
+def _ids_by_authors(db: CatalogueDB, author_keys: set[str]) -> list[int]:
+    if not author_keys:
+        return []
+    placeholders = ", ".join("?" for _ in author_keys)
+    rows = db.conn.execute(
+        """SELECT DISTINCT ep.edition_id
+           FROM catalogue_people p
+           JOIN catalogue_edition_people ep ON ep.person_id=p.id
+           WHERE ep.role='author' AND p.normalized_name IN (""" + placeholders + ") ORDER BY ep.edition_id LIMIT ?",
+        tuple(sorted(author_keys)) + (_EXACT_POOL_LIMIT,),
+    ).fetchall()
+    return [int(row[0]) for row in rows]
+
+
+def _fuzzy_pool_ids(
+    db: CatalogueDB,
+    title_key: str,
+    author_keys: set[str],
+    selected: set[int],
+    title: str | None = None,
+) -> list[int]:
+    if not title_key:
+        return []
+    prefix = title_key[: min(8, len(title_key))]
+    work_rows = db.conn.execute(
+        """SELECT e.id
+           FROM catalogue_editions e
+           WHERE e.work_id IN (
+               SELECT w.id FROM catalogue_works w WHERE w.sort_title GLOB ?
+           )
+           ORDER BY e.id LIMIT ?""",
+        (_glob_prefix(prefix), _FUZZY_POOL_LIMIT),
+    ).fetchall()
+    title_prefix = (title or title_key)[: min(8, len(title or title_key))]
+    title_rows = db.conn.execute(
+        "SELECT id FROM catalogue_editions WHERE title GLOB ? ORDER BY id LIMIT ?",
+        (_glob_prefix(title_prefix), _FUZZY_POOL_LIMIT),
+    ).fetchall()
+    ids = sorted({int(row[0]) for row in (*work_rows, *title_rows)})
+    return [edition_id for edition_id in ids if edition_id not in selected][:_FUZZY_POOL_LIMIT]
+
+
+def _glob_prefix(prefix: str) -> str:
+    """Build a literal, indexable SQLite GLOB prefix pattern."""
+    escaped = prefix.replace("[", "[[]").replace("*", "[*]").replace("?", "[?]")
+    return escaped + "*"
+
+
+def _load_canonical_editions(db: CatalogueDB, edition_ids: list[int]) -> dict[int, _CanonicalEdition]:
+    if not edition_ids:
+        return {}
+    placeholders = ", ".join("?" for _ in edition_ids)
+    rows = db.conn.execute(
+        """SELECT e.id, e.title, w.title AS work_title
+           FROM catalogue_editions e
+           LEFT JOIN catalogue_works w ON w.id=e.work_id
+           WHERE e.id IN (""" + placeholders + ")""",
+        tuple(edition_ids),
+    ).fetchall()
+    output: dict[int, _CanonicalEdition] = {}
+    for row in rows:
+        edition_id = int(row[0])
+        people = db.conn.execute(
+            """SELECT p.name, p.normalized_name
+               FROM catalogue_edition_people ep
+               JOIN catalogue_people p ON p.id=ep.person_id
+               WHERE ep.edition_id=? AND ep.role='author'
+               ORDER BY ep.position, p.id""",
+            (edition_id,),
+        ).fetchall()
+        identifiers = db.conn.execute(
+            """SELECT normalized_value FROM catalogue_identifiers
+               WHERE entity_type='edition' AND entity_id=? AND namespace='isbn'""",
+            (edition_id,),
+        ).fetchall()
+        authors = tuple(str(person[0]) for person in people)
+        normalized_authors = tuple(str(person[1]) for person in people)
+        output[edition_id] = _CanonicalEdition(
+            edition_id, str(row[1] or row[2] or ""), authors, normalized_authors,
+            tuple(str(identifier[0]) for identifier in identifiers),
+        )
+    return output
+
+
+def _persist_candidate(
+    db: CatalogueDB,
+    document_id: int,
+    edition_id: int,
+    score: float,
+    method: str,
+    evidence: dict[str, object],
+) -> int:
+    existing = db.conn.execute(
+        "SELECT id FROM catalogue_document_matches WHERE document_id=? AND edition_id=?",
+        (document_id, edition_id),
+    ).fetchone()
+    if existing:
+        return int(existing[0])
+    cur = db.conn.execute(
+        """INSERT INTO catalogue_document_matches
+           (document_id, edition_id, score, method, status, evidence_json)
+           VALUES (?, ?, ?, ?, 'candidate', ?)""",
+        (document_id, edition_id, score, method, json.dumps(evidence, ensure_ascii=False, sort_keys=True)),
+    )
+    return int(cur.lastrowid)
+
+
+def _normalized_name(value: object) -> str:
+    return re.sub(r"\s+", " ", normalize_bengali(str(value or "")).strip()).lower()
+
+
+def _text(value: object) -> str | None:
+    text = str(value).strip() if value is not None else ""
+    return text or None
+
+
+def _strings(value: object) -> list[str]:
+    values = value if isinstance(value, list) else [value] if value else []
+    return [str(item.get("name") if isinstance(item, dict) else item).strip() for item in values if str(item.get("name") if isinstance(item, dict) else item).strip()]
 
 
 def review_match(db: CatalogueDB, match_id: int, *, reviewer: str, decision: str, reason: str) -> None:

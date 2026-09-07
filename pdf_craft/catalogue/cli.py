@@ -64,7 +64,7 @@ def cmd_stage_rokomari(args: argparse.Namespace) -> None:
 
     db = CatalogueDB(args.db)
     staged, skipped = stage_rokomari_from_file(
-        db, args.file, snapshot_key=args.snapshot_key,
+        db, args.file, snapshot_key=args.snapshot_key, batch_size=args.batch_size,
     )
     print(f"Staged {staged} Rokomari records; skipped {skipped}")
     db.close()
@@ -98,7 +98,9 @@ def cmd_materialize_source(args: argparse.Namespace) -> None:
     from .materialization import materialize_source_records
 
     db = CatalogueDB(args.db)
-    report = materialize_source_records(db, source=args.source, dry_run=args.dry_run)
+    report = materialize_source_records(
+        db, source=args.source, dry_run=args.dry_run, batch_size=args.batch_size,
+    )
     print("Materialization: " + ", ".join(f"{key}={value}" for key, value in report.items()))
     db.close()
 
@@ -296,6 +298,7 @@ def main() -> None:
     p_stage_rokomari.add_argument("--db", default="catalogue.db")
     p_stage_rokomari.add_argument("--file", required=True)
     p_stage_rokomari.add_argument("--snapshot-key")
+    p_stage_rokomari.add_argument("--batch-size", type=int, default=500)
     p_stage_rokomari.set_defaults(func=cmd_stage_rokomari)
 
     p_stage_google = sub.add_parser(
@@ -317,6 +320,7 @@ def main() -> None:
     p_materialize = sub.add_parser("materialize-source", help="Materialize staged source records")
     p_materialize.add_argument("--db", default="catalogue.db")
     p_materialize.add_argument("--source")
+    p_materialize.add_argument("--batch-size", type=int, default=500)
     p_materialize.add_argument("--dry-run", action="store_true")
     p_materialize.set_defaults(func=cmd_materialize_source)
 
