@@ -285,9 +285,13 @@ def _get_person(conn, name: str) -> int:
 
 
 def _assert(conn, entity_type: str, entity_id: int, field: str, value: object, source_record_id: int) -> None:
+    """Record one observation for a source row on the bulk path.
+
+    The source-record-to-edition mapping is inserted in the same transaction
+    before assertions are written. A committed source record is skipped on a
+    later run, so a duplicate lookup here only adds work to the bulk import.
+    """
     encoded = json.dumps(value, ensure_ascii=False, sort_keys=True)
-    if conn.execute("SELECT 1 FROM catalogue_metadata_assertions WHERE entity_type=? AND entity_id=? AND field_name=? AND value_json=? AND source_record_id=?", (entity_type, entity_id, field, encoded, source_record_id)).fetchone():
-        return
     conn.execute("INSERT INTO catalogue_metadata_assertions (entity_type, entity_id, field_name, value_json, source_record_id, confidence) VALUES (?, ?, ?, ?, ?, 1.0)", (entity_type, entity_id, field, encoded, source_record_id))
 
 
@@ -296,14 +300,8 @@ def _insert_identifier(conn, edition_id: int, namespace: str, value: str) -> Non
     normalized = value.strip()
     if not normalized:
         return
-    existing = conn.execute(
-        "SELECT entity_type, entity_id FROM catalogue_identifiers WHERE namespace=? AND normalized_value=?",
-        (namespace, normalized),
-    ).fetchone()
-    if existing:
-        return
     conn.execute(
-        "INSERT INTO catalogue_identifiers (entity_type, entity_id, namespace, value, normalized_value) VALUES ('edition', ?, ?, ?, ?)",
+        "INSERT OR IGNORE INTO catalogue_identifiers (entity_type, entity_id, namespace, value, normalized_value) VALUES ('edition', ?, ?, ?, ?)",
         (edition_id, namespace, value, normalized),
     )
 
