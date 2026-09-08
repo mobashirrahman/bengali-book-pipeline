@@ -629,7 +629,16 @@ def parse_embedded_title(value: str) -> ParsedFilename:
     if it looks like a person, so `বাংলা গল্প-বিচিত্রা` does not donate its second
     half to the author field.
     """
-    cleaned = _clean_part(_strip_boilerplate(value or ""))
+    # These titles are filenames, so they keep the extension: real values seen
+    # include `শেক্সপীয়র রচনাবলী ।। পৃথ্বীরাজ সেন.pdf` and
+    # `ca$hvertising ( PDFDrive.com ).epub`.  Stripping it first also unblocks
+    # the separator split, which the trailing `.pdf` was defeating.
+    raw = re.sub(r"\.(pdf|epub|mobi|azw3?|djvu|txt)\s*$", "", value or "", flags=re.IGNORECASE)
+    # Download sites stamp their domain into the name, usually parenthesised:
+    # `ca$hvertising ( PDFDrive.com )`.  A parenthetical that is just a domain
+    # carries no bibliographic content.
+    raw = re.sub(r"[\(\[]\s*[\w-]+\.(com|net|org|info|io|co)\s*[\)\]]", " ", raw, flags=re.IGNORECASE)
+    cleaned = _clean_part(_strip_boilerplate(raw))
     if not cleaned:
         return ParsedFilename((), (), "embedded_title", confidence=0.0)
 

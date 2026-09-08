@@ -434,3 +434,20 @@ def test_embedded_title_rejects_a_non_person_tail():
 
     result = parse_embedded_title("রচনাবলী - ২য় খণ্ড সমগ্র")
     assert result.authors == ()
+
+
+def test_embedded_title_strips_file_extension_and_site_stamp():
+    """These titles are filenames, so they arrive with the extension attached.
+
+    Real values: `শেক্সপীয়র রচনাবলী ।। পৃথ্বীরাজ সেন.pdf` and
+    `ca$hvertising ( PDFDrive.com ).epub`. The trailing `.pdf` also defeated the
+    danda split until it was stripped first.
+    """
+    from pdf_craft.catalogue.filename_parser import parse_embedded_title
+
+    result = parse_embedded_title("শেক্সপীয়র রচনাবলী ।। পৃথ্বীরাজ সেন.pdf")
+    assert result.titles == ("শেক্সপীয়র রচনাবলী",)
+    assert result.authors == ("পৃথ্বীরাজ সেন",)
+
+    stamped = parse_embedded_title("ca$hvertising ( PDFDrive.com ).epub")
+    assert stamped.titles == ("ca$hvertising",)
