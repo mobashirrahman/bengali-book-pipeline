@@ -606,3 +606,66 @@ def parse_filename(source_path: str) -> ParsedFilename:
         confidence=confidence,
         directory_author=directory_author,
     )
+
+
+# Bengali sentence terminators used as a title/author separator in this corpus:
+# `অনুর পাঠশালা ।। মাহমুদুল হক`.
+_DANDA_SPLIT = re.compile(r"\s*(?:।।|॥|।\s*।)\s*")
+
+
+def parse_embedded_title(value: str) -> ParsedFilename:
+    """Split a title string that is really a filename in disguise.
+
+    1,630 EPUBs in this collection carry a numeric filename (`281.epub`) and an
+    OPF ``dc:title`` holding the *original PDF filename* -- scraper boilerplate
+    and all, including a literal ``Unknown Author -`` prefix on 332 of them and
+    ``is waiting to be download!!!`` on 138.  They were produced by converting
+    the scraped PDFs, so the title carries the author that ``dc:creator`` is
+    missing.  Measured: 70% split on ` - `, plus ` by `, the Bengali danda and
+    trailing parentheses, for 72% of the authorless EPUBs.
+
+    Title-first ordering, matching the observed data
+    (`শ্রেষ্ঠ কবিতা - শফিকুল ইসলাম`).  The trailing segment becomes an author only
+    if it looks like a person, so `বাংলা গল্প-বিচিত্রা` does not donate its second
+    half to the author field.
+    """
+    cleaned = _clean_part(_strip_boilerplate(value or ""))
+    if not cleaned:
+        return ParsedFilename((), (), "embedded_title", confidence=0.0)
+
+    cleaned, volume, edition, year = _extract_volume_edition_year(cleaned)
+    title, author = cleaned, ""
+
+    # An explicit ` by ` marker is unambiguous, so it is tried first.
+    by_match = re.split(r"\s+[Bb][Yy]\s+", cleaned, maxsplit=1)
+    if len(by_match) == 2 and by_match[0].strip() and by_match[1].strip():
+        title, author = by_match[0], by_match[1]
+    elif _DANDA_SPLIT.search(cleaned):
+        parts = [part for part in _DANDA_SPLIT.split(cleaned) if part.strip()]
+        if len(parts) >= 2:
+            title, author = " ".join(parts[:-1]), parts[-1]
+    elif re.search(r"\s[-–—]\s", cleaned):
+        segments = re.split(r"\s[-–—]\s", cleaned)
+        if len(segments) >= 2:
+            title, author = " - ".join(segments[:-1]), segments[-1]
+    else:
+        trailing = re.search(r"^(.*?)\s*\(([^()]{4,})\)\s*$", cleaned)
+        if trailing:
+            title, author = trailing.group(1), trailing.group(2)
+
+    title = _clean_part(title)
+    author = _clean_part(author)
+    # A separator does not prove the tail is a person; many titles simply
+    # contain a dash.  Reuse the structural test rather than trusting position.
+    if author and not is_probably_person_name(author):
+        title, author = cleaned, ""
+
+    return ParsedFilename(
+        titles=(title,) if title else (),
+        authors=(author,) if author else (),
+        source="embedded_title",
+        volume=volume,
+        edition=edition,
+        year=year,
+        confidence=0.7 if author else 0.4,
+    )

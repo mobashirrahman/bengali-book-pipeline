@@ -367,3 +367,70 @@ def test_rejected_directory_is_not_emitted_as_an_author():
     parsed = parse_filename("data/epub-staging/Bishoron.pdf")
     assert parsed.directory_author is None
     assert "epub-staging" not in parsed.authors
+
+
+# ---------------------------------------------------------------------------
+# Embedded titles that are really filenames
+# ---------------------------------------------------------------------------
+
+
+def test_embedded_title_splits_title_from_author():
+    """1,630 EPUBs carry a numeric filename and the original PDF name as
+    dc:title, so the author dc:creator lacks is sitting in the title."""
+    from pdf_craft.catalogue.filename_parser import parse_embedded_title
+
+    result = parse_embedded_title("শ্রেষ্ঠ কবিতা - শফিকুল ইসলাম")
+    assert result.titles == ("শ্রেষ্ঠ কবিতা",)
+    assert result.authors == ("শফিকুল ইসলাম",)
+
+
+def test_embedded_title_bengali_danda_separator():
+    from pdf_craft.catalogue.filename_parser import parse_embedded_title
+
+    result = parse_embedded_title("অনুর পাঠশালা ।। মাহমুদুল হক")
+    assert result.titles == ("অনুর পাঠশালা",)
+    assert result.authors == ("মাহমুদুল হক",)
+
+
+def test_embedded_title_strips_scraper_boilerplate():
+    # `Unknown Author -` leaked into 332 OPF titles and the download banner
+    # into 138, because these EPUBs were converted from the scraped PDFs.
+    from pdf_craft.catalogue.filename_parser import parse_embedded_title
+
+    result = parse_embedded_title("Unknown Author - Maa is waiting to be download!!!")
+    assert result.titles == ("Maa",)
+    assert result.authors == ()
+
+
+def test_embedded_title_extracts_bengali_volume_digits():
+    from pdf_craft.catalogue.filename_parser import parse_embedded_title
+
+    result = parse_embedded_title("৬৩। একজন মায়াবতী - হুমায়ূন আহমেদ")
+    assert result.volume == "63"
+    assert result.titles == ("একজন মায়াবতী",)
+    assert result.authors == ("হুমায়ূন আহমেদ",)
+
+
+def test_embedded_title_trailing_parenthetical_author():
+    from pdf_craft.catalogue.filename_parser import parse_embedded_title
+
+    result = parse_embedded_title("বাংলা গল্প-বিচিত্রা (বিভূতিভূষণ বন্দ্যোপাধ্যায়)")
+    assert result.authors == ("বিভূতিভূষণ বন্দ্যোপাধ্যায়",)
+    # The hyphen inside the title must not be treated as a separator.
+    assert result.titles == ("বাংলা গল্প-বিচিত্রা",)
+
+
+def test_embedded_title_without_a_separator_yields_no_author():
+    from pdf_craft.catalogue.filename_parser import parse_embedded_title
+
+    result = parse_embedded_title("CH3")
+    assert result.titles == ("CH3",)
+    assert result.authors == ()
+
+
+def test_embedded_title_rejects_a_non_person_tail():
+    # A dash in a title does not make the tail an author.
+    from pdf_craft.catalogue.filename_parser import parse_embedded_title
+
+    result = parse_embedded_title("রচনাবলী - ২য় খণ্ড সমগ্র")
+    assert result.authors == ()
