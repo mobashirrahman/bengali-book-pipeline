@@ -214,3 +214,32 @@ def test_epub_rewrite_stays_valid(tmp_path: Path) -> None:
     result = extract_epub_metadata(staged)
     assert result["title"] == "New Title"
     assert result["authors"] == ["New Author"]
+
+
+def test_same_sha_sources_get_distinct_staged_copies(tmp_path: Path) -> None:
+    import shutil
+
+    # Byte-identical files under different paths with conflicting
+    # accepted metadata (the bio10 corpus has 259 such SHA groups):
+    # each record must stage, verify and read back independently.
+    first = _write_pdf(tmp_path / "First Book - First Author.pdf")
+    second = tmp_path / "Second Book - Second Author.pdf"
+    shutil.copy(first, second)
+    assert manifest.sha256_of(first) == manifest.sha256_of(second)
+    manifest_path = _manifest_for([first, second], tmp_path)
+    plan_file = tmp_path / "plan.json"
+    report = embed.prepare_plan(
+        manifest_path, tmp_path / "staging", plan_path=plan_file)
+    assert report == {"examined": 2, "prepared": 2, "reused": 0,
+                      "skipped": 0, "errors": 0}
+    with open(plan_file, encoding="utf-8") as handle:
+        plan = json.load(handle)
+    staged = [plan["entries"][str(p)]["staged"] for p in (first, second)]
+    assert staged[0] != staged[1]
+    assert plan["entries"][str(first)]["source_sha256"] == manifest.sha256_of(first)
+    assert plan["entries"][str(second)]["source_sha256"] == manifest.sha256_of(second)
+    check = embed.verify_plan(plan_file)
+    assert check == {"checked": 2, "verified": 2, "mismatch": 0,
+                     "missing": 0, "details": {}}
+    assert embed.read_embedded(staged[0])["title"] == f"Title of {first.stem}"
+    assert embed.read_embedded(staged[1])["title"] == f"Title of {second.stem}"

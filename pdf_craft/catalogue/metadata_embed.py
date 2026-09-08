@@ -23,6 +23,7 @@ never inferred and are left untouched.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import posixpath
@@ -216,8 +217,20 @@ def read_embedded(path: str | Path) -> dict[str, Any]:
 
 
 def _staged_name(source_sha: str, source: str) -> str:
+    """Deterministic collision-free staged filename for one source path.
+
+    The corpus has hundreds of duplicate-SHA groups whose paths carry
+    *conflicting* accepted metadata, so the source hash alone cannot
+    name the staged copy: two such records would overwrite each other's
+    staged file and the loser would verify/apply the wrong metadata.
+    The name therefore mixes the content hash (for human debugging)
+    with a digest of the source path (for uniqueness).  The plan record
+    keeps the full ``source_sha256`` separately, and ``apply_plan``
+    still targets the original source path from the record key.
+    """
     suffix = Path(source).suffix.lower() or ".bin"
-    return f"{source_sha}{suffix}"
+    path_digest = hashlib.sha256(str(source).encode("utf-8")).hexdigest()[:16]
+    return f"{source_sha or 'unknown'}-{path_digest}{suffix}"
 
 
 def prepare_plan(
