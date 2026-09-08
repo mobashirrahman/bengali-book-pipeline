@@ -14,6 +14,7 @@ export function EpubReader({ title, contentUrl }: EpubReaderProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [state, setState] = useState<EpubState>('loading')
   const [error, setError] = useState<string>()
+  const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
     let cancelled = false
@@ -47,11 +48,11 @@ export function EpubReader({ title, contentUrl }: EpubReaderProps) {
       rendition?.destroy?.()
       book?.destroy?.()
     }
-  }, [contentUrl])
+  }, [contentUrl, attempt])
 
   return <section className={`epub-reader epub-reader--${state}`} aria-label={`${title} EPUB reader`}>
-    {state === 'loading' && <div className="document-state"><span className="document-spinner" aria-hidden="true" /><strong>Opening EPUB</strong><span>Loading the protected edition…</span></div>}
-    {state === 'error' && <div className="document-state document-state--error" role="alert"><strong>Unable to open this EPUB</strong><span>{error ?? 'The protected document returned an unreadable response.'}</span><span>Check your connection or try the download link above.</span></div>}
+    {state === 'loading' && <div className="document-state" role="status"><span className="document-spinner" aria-hidden="true" /><strong>Opening EPUB</strong><span>Loading the protected edition…</span></div>}
+    {state === 'error' && <div className="document-state document-state--error" role="alert"><strong>Unable to open this EPUB</strong><span>{error ?? 'The protected document returned an unreadable response.'}</span><span>Check your connection or try the download link above.</span><button type="button" className="button button--dark" onClick={() => setAttempt((value) => value + 1)}>Retry opening the EPUB</button></div>}
     <div ref={containerRef} className="epub-reader__surface" />
   </section>
 }

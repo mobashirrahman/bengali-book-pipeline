@@ -17,7 +17,7 @@ export function Header({ route, navigate }: HeaderProps) {
     <nav className="desktop-nav" aria-label="Primary navigation">
       <a className={route.name === 'home' ? 'is-active' : ''} href="/" onClick={(event) => { event.preventDefault(); navigate('/') }}>Home</a>
       <a className={route.name === 'discover' ? 'is-active' : ''} href="/discover" onClick={(event) => { event.preventDefault(); navigate('/discover') }}>Discover</a>
-      <a href="/about" onClick={(event) => event.preventDefault()}>Your shelf</a>
+      <a href="/shelf" onClick={(event) => { event.preventDefault(); navigate('/shelf') }}>Your shelf</a>
     </nav>
     <form className="header-search" onSubmit={submit} role="search">
       <SearchIcon /><input aria-label="Search the catalogue" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search books, authors..." /><button type="submit">Search</button>
@@ -30,7 +30,6 @@ export function MobileNav({ route, navigate }: HeaderProps) {
   return <nav className="mobile-nav" aria-label="Mobile navigation">
     <a className={route.name === 'home' ? 'is-active' : ''} href="/" onClick={(event) => { event.preventDefault(); navigate('/') }}><span>⌂</span>Home</a>
     <a className={route.name === 'discover' ? 'is-active' : ''} href="/discover" onClick={(event) => { event.preventDefault(); navigate('/discover') }}><SearchIcon />Discover</a>
-    <a href="/about" onClick={(event) => event.preventDefault()}><span>▤</span>Shelf</a>
-    <a href="/profile" onClick={(event) => event.preventDefault()}><span>◌</span>Profile</a>
+    <a href="/shelf" onClick={(event) => { event.preventDefault(); navigate('/shelf') }}><span>▤</span>Shelf</a>
   </nav>
 }

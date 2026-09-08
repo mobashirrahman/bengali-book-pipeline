@@ -172,6 +172,8 @@ export interface BookRecord {
 
 export type Route =
   | { name: 'home' }
+  | { name: 'shelf' }
   | { name: 'discover'; query: string }
   | { name: 'work'; id: string }
   | { name: 'reader'; id: string }
+  | { name: 'notFound'; path: string }

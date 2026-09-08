@@ -1,5 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, createCatalogueApi } from './api'
+import { ApiError, createCatalogueApi, isAbortError } from './api'
+
+describe('abort detection', () => {
+  it('treats DOM and plain-object aborts as cancellation, and nothing else', () => {
+    expect(isAbortError(new DOMException('The operation was aborted.', 'AbortError'))).toBe(true)
+    expect(isAbortError({ name: 'AbortError' })).toBe(true)
+    expect(isAbortError(new TypeError('Failed to fetch'))).toBe(false)
+    expect(isAbortError(new ApiError('nope', 0, '/v2/health'))).toBe(false)
+    expect(isAbortError(undefined)).toBe(false)
+    expect(isAbortError(null)).toBe(false)
+  })
+})
 
 describe('catalogue API adapter', () => {
   afterEach(() => vi.restoreAllMocks())
@@ -29,6 +40,17 @@ describe('catalogue API adapter', () => {
   it('does not hide a failed HTTP response behind an empty result', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 500 }))
     await expect(createCatalogueApi().stats()).rejects.toBeInstanceOf(ApiError)
+  })
+
+  it('normalizes a network failure into an actionable ApiError', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('Failed to fetch'))
+    await expect(createCatalogueApi().health()).rejects.toMatchObject({ name: 'ApiError', status: 0, path: '/v2/health' })
+  })
+
+  it('does not wrap a non-DOM abort rejection in an ApiError', async () => {
+    const abort = { name: 'AbortError', message: 'cancelled' }
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(abort)
+    await expect(createCatalogueApi().health()).rejects.toBe(abort)
   })
 
   it('exposes protected content and download URLs from the configured API origin', () => {

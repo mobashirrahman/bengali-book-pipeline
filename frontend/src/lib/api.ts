@@ -21,6 +21,17 @@ export class ApiError extends Error {
   }
 }
 
+// Abort rejections are not always DOMException instances (jsdom, fetch
+// polyfills and test doubles may reject with a plain { name } object), so
+// detect cancellation by shape instead of instanceof.
+export function isAbortError(reason: unknown): boolean {
+  return (
+    typeof reason === 'object' &&
+    reason !== null &&
+    (reason as { name?: unknown }).name === 'AbortError'
+  )
+}
+
 export interface CatalogueApi {
   health(signal?: AbortSignal): Promise<HealthResponse>
   stats(signal?: AbortSignal): Promise<StatsResponse>
@@ -54,11 +65,19 @@ const asJson = async <T>(response: Response, path: string): Promise<T> => {
 export function createCatalogueApi(baseUrl = ''): CatalogueApi {
   const url = (path: string) => `${baseUrl.replace(/\/$/, '')}${path}`
   const request = async <T>(path: string, signal?: AbortSignal, init: RequestInit = {}): Promise<T> => {
-    const response = await fetch(url(path), {
-      ...init,
-      headers: { Accept: 'application/json', ...init.headers },
-      signal,
-    })
+    let response: Response
+    try {
+      response = await fetch(url(path), {
+        ...init,
+        headers: { Accept: 'application/json', ...init.headers },
+        signal,
+      })
+    } catch (reason: unknown) {
+      // Preserve caller cancellation so UI guards can ignore it quietly.
+      if (isAbortError(reason)) throw reason
+      const detail = reason instanceof Error && reason.message ? `: ${reason.message}` : ''
+      throw new ApiError(`The catalogue API could not be reached${detail}. Check your connection and try again.`, 0, path)
+    }
     return asJson<T>(response, path)
   }
 
