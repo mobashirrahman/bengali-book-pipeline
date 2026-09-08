@@ -32,6 +32,7 @@ import hashlib
 import json
 import mimetypes
 import os
+import re
 import stat
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -1910,3 +1911,81 @@ def rollback_manifest(manifest_path: str | Path) -> dict:
     _write_manifest(Path(manifest_path), manifest)
     return {"restored": restored, "conflicts": conflicts,
             "conflict_count": len(conflicts)}
+
+
+# --- Vetoes ------------------------------------------------------------------
+
+# Successive volumes of a series are typeset identically, printed by the same
+# press and scanned by the same scanner, so their page images agree as strongly
+# as two copies of one book do -- the observed pair was ``গৃহ চিত্র [খণ্ড-২]``
+# against ``গৃহ চিত্র``.  No visual signal can separate them.  The filenames
+# state the volume outright, so the filenames get the final say.
+#
+# ``filename_parser.volume`` is not reused here: it recognises only the forms it
+# needs for titling and misses ``খণ্ড-২``, ``Part-3`` and a trailing ``-11``.
+# This pass is deliberately broader, because it is cheap and its failure mode is
+# safe -- see ``has_volume_conflict``.
+
+_BENGALI_DIGITS = str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789")
+
+_BENGALI_ORDINALS = {
+    "প্রথম": "1", "দ্বিতীয়": "2", "তৃতীয়": "3", "চতুর্থ": "4", "পঞ্চম": "5",
+    "ষষ্ঠ": "6", "সপ্তম": "7", "অষ্টম": "8", "নবম": "9", "দশম": "10",
+    "একাদশ": "11", "দ্বাদশ": "12", "ত্রয়োদশ": "13", "চতুর্দশ": "14",
+    "পঞ্চদশ": "15", "ষোড়শ": "16", "সপ্তদশ": "17", "অষ্টাদশ": "18",
+    "ঊনবিংশ": "19", "বিংশ": "20",
+}
+
+# A number that follows a volume word, in either script and either order.
+_VOLUME_WORDS = r"(?:খণ্ড|পর্ব|ভাগ|সংস্করণ|part|vol|volume|khanda|parba)"
+_VOLUME_AFTER = re.compile(_VOLUME_WORDS + r"[\s\-._:]*([0-9]{1,3})", re.IGNORECASE)
+_VOLUME_BEFORE = re.compile(r"([0-9]{1,3})[\s\-._:]*" + _VOLUME_WORDS, re.IGNORECASE)
+# A bare number at the very end of the name, as in ``Rachanabali-11``.
+_TRAILING_NUMBER = re.compile(r"[\-_\s]([0-9]{1,3})\s*$")
+
+
+def volume_tokens(filename: str) -> frozenset[str]:
+    """Every volume number a filename states, normalized to ASCII digits."""
+    stem = Path(filename).stem.translate(_BENGALI_DIGITS)
+    tokens = set(_VOLUME_AFTER.findall(stem)) | set(_VOLUME_BEFORE.findall(stem))
+    for word, value in _BENGALI_ORDINALS.items():
+        if word in stem:
+            tokens.add(value)
+    trailing = _TRAILING_NUMBER.search(stem)
+    if trailing:
+        tokens.add(trailing.group(1))
+    return frozenset(token.lstrip("0") or "0" for token in tokens)
+
+
+def has_volume_conflict(left_path: str, right_path: str) -> bool:
+    """True when two files may be different volumes of one series.
+
+    The test is deliberately asymmetric in its caution: any disagreement at all
+    vetoes the edge, including the case where one filename names a volume and
+    the other names none.  A wrong veto costs nothing but a duplicate left in
+    place; a wrong merge deletes a volume the user cannot get back.
+    """
+    left, right = volume_tokens(left_path), volume_tokens(right_path)
+    if not left and not right:
+        return False
+    return left != right
+
+
+def apply_vetoes(
+    edges: list[DuplicateEdge], source_paths: dict[int, str]
+) -> tuple[list[DuplicateEdge], int]:
+    """Drop content edges that a filename disagreement rules out.
+
+    Metadata edges are left alone: they already carry the weakest claim and are
+    never acted on, so vetoing them would only hide a genuine link.
+    """
+    kept: list[DuplicateEdge] = []
+    vetoed = 0
+    for edge in edges:
+        if edge.method in CONTENT_METHODS and has_volume_conflict(
+            source_paths.get(edge.left_id, ""), source_paths.get(edge.right_id, "")
+        ):
+            vetoed += 1
+            continue
+        kept.append(edge)
+    return kept, vetoed

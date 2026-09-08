@@ -9,13 +9,16 @@ from pdf_craft.catalogue.foundation import (
     file_sha256,
     ingest_local_documents,
 )
+from pdf_craft.catalogue.schema import SCHEMA_VERSION
 
 
 def test_schema_migrates_existing_v1_database(tmp_path: Path) -> None:
     db_path = tmp_path / "catalogue.db"
     db = CatalogueDB(db_path)
     version = db.conn.execute("SELECT version FROM schema_version").fetchone()[0]
-    assert version == 9
+    # Pinning the literal would make every additive migration a test edit;
+    # what matters is that a fresh database lands on the current version.
+    assert version == SCHEMA_VERSION
     assert db.conn.execute(
         "SELECT name FROM sqlite_master WHERE name='catalogue_works'"
     ).fetchone()

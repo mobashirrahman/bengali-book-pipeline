@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import uuid
 from pathlib import Path
 
 import pytest
@@ -19,21 +20,37 @@ import pdf_craft.catalogue.page_fingerprint as page_fp
 from pdf_craft.catalogue.database import CatalogueDB
 from pdf_craft.catalogue.dedupe import (
     DEDUPE_TOOL_VERSION,
+    MAX_AUTO_CLUSTER,
+    RELATION_DUPLICATE,
+    RELATION_FORMAT_VARIANT,
+    RELATION_SAME_WORK,
+    DocumentMetadata,
+    DocumentQuality,
     DuplicateCluster,
     DuplicateEdge,
     apply_report,
     analyze_run,
+    assign_keepers,
     build_clusters,
     build_report,
+    choose_keeper,
     classify_relation,
     inventory_corpus,
+    load_document_facts,
     load_report_file,
+    metadata_edges,
+    quality_score,
+    removal_candidates,
     reconcile_report,
     rollback_manifest,
     safe_removal_candidates,
     sha256_edges,
+    store_clusters,
+    store_edges,
+    summarize,
     write_report_files,
 )
+from pdf_craft.catalogue.schema import initialize_database
 from pdf_craft.catalogue.page_fingerprint import (
     PageFingerprint,
     find_duplicate_documents,
@@ -515,3 +532,377 @@ def test_duplicate_cluster_helper_marks_only_removable() -> None:
         relation="format_variant", status="auto", keeper_id=1,
     )
     assert variant.removable is False
+
+
+# --- Spec: relation classification, clustering, keepers, safety -----------------
+#
+# The tests below pin the three meanings of "same book" (duplicate /
+# format_variant / same_work).  Only `duplicate` may ever remove a file.
+
+
+PDF = "application/pdf"
+EPUB = "application/epub+zip"
+
+
+def _pdf_media(*ids: int) -> dict[int, str]:
+    return {doc_id: PDF for doc_id in ids}
+
+
+def test_page_image_match_between_pdfs_is_a_duplicate() -> None:
+    edge = DuplicateEdge(1, 2, "page_image", 3.0, {})
+    assert classify_relation(edge, _pdf_media(1, 2)) == RELATION_DUPLICATE
+
+
+def test_epub_pdf_pair_is_a_format_variant_not_a_duplicate() -> None:
+    # A PDF and an EPUB of the same book are both kept: different formats
+    # are not competing copies.  Getting this wrong deletes a user's books.
+    edge = DuplicateEdge(1, 2, "text_minhash", 0.9, {})
+    media = {1: PDF, 2: EPUB}
+    assert classify_relation(edge, media) == RELATION_FORMAT_VARIANT
+    assert classify_relation(edge, media) != RELATION_DUPLICATE
+
+
+def test_metadata_match_alone_is_same_work_never_a_duplicate() -> None:
+    # Metadata cannot tell a duplicate file from a second printing, so it
+    # must never justify removal.
+    edge = DuplicateEdge(1, 2, "metadata_exact", 1.0, {})
+    assert classify_relation(edge, _pdf_media(1, 2)) == RELATION_SAME_WORK
+
+
+def test_unknown_media_types_never_justify_removal() -> None:
+    # Without known media types the edge cannot prove same-format
+    # redundancy, so it falls back to the non-removal same_work relation.
+    # (Conservative on purpose: unknown evidence must keep both files.)
+    for method in ("sha256", "page_image", "text_minhash"):
+        edge = DuplicateEdge(1, 2, method, 1.0, {})
+        assert classify_relation(edge, {}) == RELATION_SAME_WORK
+
+
+def test_duplicate_edges_close_transitively() -> None:
+    edges = [
+        DuplicateEdge(1, 2, "page_image", 3.0, {}),
+        DuplicateEdge(2, 3, "page_image", 3.0, {}),
+    ]
+    clusters = build_clusters(edges, _pdf_media(1, 2, 3),
+                              relation=RELATION_DUPLICATE)
+    assert [cluster.document_ids for cluster in clusters] == [[1, 2, 3]]
+
+
+def test_duplicate_clustering_does_not_pull_in_the_epub() -> None:
+    # The EPUB linked by a format_variant edge must not be dragged into the
+    # redundant-PDF cluster, where it could be scored out and removed.
+    edges = [
+        DuplicateEdge(1, 2, "page_image", 3.0, {}),
+        DuplicateEdge(2, 3, "sha256", 1.0, {}),
+    ]
+    media = {1: PDF, 2: PDF, 3: EPUB}
+    clusters = build_clusters(edges, media, relation=RELATION_DUPLICATE)
+    assert [cluster.document_ids for cluster in clusters] == [[1, 2]]
+
+
+def test_oversized_cluster_needs_review_and_is_not_removable() -> None:
+    members = list(range(1, MAX_AUTO_CLUSTER + 2))  # one past the limit
+    edges = [
+        DuplicateEdge(left, left + 1, "page_image", 3.0, {})
+        for left in members[:-1]
+    ]
+    clusters = build_clusters(edges, _pdf_media(*members),
+                              relation=RELATION_DUPLICATE)
+    assert len(clusters) == 1
+    assert clusters[0].status == "review"
+    assert clusters[0].removable is False  # a human must look first
+
+
+def test_singleton_documents_form_no_clusters() -> None:
+    edges = [DuplicateEdge(1, 2, "page_image", 3.0, {})]
+    clusters = build_clusters(edges, _pdf_media(1, 2, 3),
+                              relation=RELATION_DUPLICATE)
+    assert all(cluster.size > 1 for cluster in clusters)
+    assert 3 not in {doc for cluster in clusters for doc in cluster.document_ids}
+
+
+def test_reversed_edge_endpoints_cluster_identically() -> None:
+    edge = DuplicateEdge(5, 2, "sha256", 1.0, {})
+    assert edge.normalized().left_id == 2
+    assert edge.normalized().right_id == 5
+    media = _pdf_media(2, 5)
+    forward = build_clusters([DuplicateEdge(2, 5, "sha256", 1.0, {})],
+                             media, relation=RELATION_DUPLICATE)
+    reversed_ = build_clusters([edge], media, relation=RELATION_DUPLICATE)
+    assert forward[0].document_ids == reversed_[0].document_ids == [2, 5]
+
+
+def test_higher_ocr_confidence_wins_between_identical_scans() -> None:
+    # Headline behaviour: scan quality decides between identical scans.
+    sharp = DocumentQuality(1, ocr_confidence=90.0)
+    blurry = DocumentQuality(2, ocr_confidence=40.0)
+    assert choose_keeper([sharp, blurry])[0] == 1
+    assert choose_keeper([blurry, sharp])[0] == 1
+
+
+def test_ocr_confidence_outranks_source_trust() -> None:
+    stained = DocumentQuality(1, source_template="granthagara",
+                              ocr_confidence=90.0)
+    clean = DocumentQuality(2, source_template="gutenberg_bengali",
+                            ocr_confidence=40.0)
+    assert choose_keeper([stained, clean])[0] == 1
+
+
+def test_copy_with_a_text_layer_wins_when_all_else_equal() -> None:
+    layered = DocumentQuality(1, has_text_layer=True)
+    scan = DocumentQuality(2, has_text_layer=False)
+    assert choose_keeper([layered, scan])[0] == 1
+
+
+def test_longer_complete_copy_wins() -> None:
+    excerpt = DocumentQuality(1, page_count=40, file_size=1000)
+    full = DocumentQuality(2, page_count=500, file_size=1000)
+    assert choose_keeper([excerpt, full])[0] == 2
+
+
+def test_resolution_ignored_when_page_counts_differ_widely() -> None:
+    short = DocumentQuality(1, page_count=40, file_size=100)
+    long_ = DocumentQuality(2, page_count=500, file_size=200)
+    _, scores = choose_keeper([short, long_])
+    assert "resolution" not in scores[1][1]
+
+
+def test_resolution_counts_when_page_counts_agree() -> None:
+    small = DocumentQuality(1, page_count=100, file_size=100)
+    large = DocumentQuality(2, page_count=100, file_size=200)
+    _, scores = choose_keeper([small, large])
+    assert "resolution" in scores[1][1]
+
+
+def test_keeper_tie_breaks_on_lowest_document_id() -> None:
+    first, _ = choose_keeper([DocumentQuality(7), DocumentQuality(3)])
+    second, _ = choose_keeper([DocumentQuality(3), DocumentQuality(7)])
+    assert first == second == 3
+
+
+def test_choose_keeper_rejects_an_empty_cluster() -> None:
+    with pytest.raises(ValueError):
+        choose_keeper([])
+
+
+def test_scorecard_terms_sum_to_the_total() -> None:
+    document = DocumentQuality(1, file_size=500, page_count=100,
+                               has_text_layer=True, has_title=True,
+                               has_authors=True, catalogue_matched=True,
+                               source_template="gutenberg_bengali",
+                               ocr_confidence=80.0)
+    total, terms = quality_score(document, max_page_count=100,
+                                 max_file_size=500, page_counts_agree=True)
+    assert total == pytest.approx(sum(terms.values()))
+
+
+def _removable_cluster(**overrides) -> DuplicateCluster:
+    fields: dict = {
+        "document_ids": [1, 2, 3],
+        "methods": {"sha256"},
+        "relation": RELATION_DUPLICATE,
+        "status": "auto",
+        "keeper_id": 1,
+    }
+    fields.update(overrides)
+    return DuplicateCluster(**fields)
+
+
+def test_removal_candidates_exclude_the_keeper() -> None:
+    # The keeper must never appear in its own removal list.
+    candidates = removal_candidates([_removable_cluster()])
+    assert 1 not in candidates
+    assert candidates == [2, 3]
+
+
+def test_format_variant_cluster_removes_nothing() -> None:
+    # Both formats are kept: the EPUB is a reading copy, not a spare.
+    cluster = _removable_cluster(relation=RELATION_FORMAT_VARIANT)
+    assert removal_candidates([cluster]) == []
+
+
+def test_same_work_cluster_removes_nothing() -> None:
+    # Metadata alone may be two genuine printings; both stay.
+    cluster = _removable_cluster(relation=RELATION_SAME_WORK)
+    assert removal_candidates([cluster]) == []
+
+
+def test_review_cluster_removes_nothing() -> None:
+    # Oversized clusters wait for a human; nothing is actionable yet.
+    cluster = _removable_cluster(status="review")
+    assert removal_candidates([cluster]) == []
+
+
+def test_summary_reports_zero_removable_for_links_only() -> None:
+    clusters = [
+        _removable_cluster(document_ids=[1, 2],
+                           relation=RELATION_FORMAT_VARIANT),
+        _removable_cluster(document_ids=[3, 4],
+                           relation=RELATION_SAME_WORK),
+    ]
+    assert summarize(clusters)["removable_copies"] == 0
+
+
+def test_identical_title_keys_link_exactly() -> None:
+    documents = [
+        DocumentMetadata(1, title_key="padma river boatman tale", author_key="a"),
+        DocumentMetadata(2, title_key="padma river boatman tale", author_key="b"),
+    ]
+    edges = metadata_edges(documents)
+    assert [(edge.left_id, edge.right_id, edge.method) for edge in edges] == [
+        (1, 2, "metadata_exact")]
+
+
+def test_short_title_keys_link_nothing() -> None:
+    # A two-syllable title collides with hundreds of books.
+    documents = [
+        DocumentMetadata(1, title_key="golpo", author_key="a"),
+        DocumentMetadata(2, title_key="golpo", author_key="a"),
+    ]
+    assert metadata_edges(documents) == []
+
+
+def test_template_title_shared_by_many_links_nothing() -> None:
+    # A stamp shared by dozens of files is boilerplate, not one book.
+    documents = [
+        DocumentMetadata(index, title_key="granthagara branded scan copy")
+        for index in range(21)
+    ]
+    assert metadata_edges(documents) == []
+
+
+def test_same_author_near_identical_titles_link_fuzzily() -> None:
+    left = "a very long book title about the rivers of bengal volume one"
+    right = "a very long book title about the rivers of bengal volume two"
+    documents = [
+        DocumentMetadata(1, title_key=left, author_key="manik bandopadhyay"),
+        DocumentMetadata(2, title_key=right, author_key="manik bandopadhyay"),
+    ]
+    edges = metadata_edges(documents)
+    assert [(edge.left_id, edge.right_id, edge.method) for edge in edges] == [
+        (1, 2, "metadata_fuzzy")]
+
+
+def test_same_author_unrelated_titles_do_not_link() -> None:
+    documents = [
+        DocumentMetadata(1, title_key="a very long book title about the rivers of bengal volume one",
+                         author_key="manik bandopadhyay"),
+        DocumentMetadata(2, title_key="completely different cookbook recipes for winter",
+                         author_key="manik bandopadhyay"),
+    ]
+    assert metadata_edges(documents) == []
+
+
+def test_exact_pair_gets_no_extra_fuzzy_edge() -> None:
+    documents = [
+        DocumentMetadata(1, title_key="padma river boatman tale", author_key="a"),
+        DocumentMetadata(2, title_key="padma river boatman tale", author_key="a"),
+    ]
+    assert len(metadata_edges(documents)) == 1
+
+
+def _seed_documents(conn, count: int, metadata: dict | None = None):
+    ids = []
+    for _ in range(count):
+        cursor = conn.execute(
+            "INSERT INTO catalogue_local_documents "
+            "(sha256, source_path, file_size, media_type, metadata_json) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (uuid.uuid4().hex, f"/books/{uuid.uuid4().hex}.pdf", 100, PDF,
+             json.dumps(metadata or {"title": "T", "authors": ["A"]})),
+        )
+        ids.append(int(cursor.lastrowid))
+    conn.commit()
+    return ids
+
+
+def test_store_edges_is_idempotent(tmp_path: Path) -> None:
+    conn = initialize_database(tmp_path / "c.db")
+    first, second = _seed_documents(conn, 2)
+    edge = DuplicateEdge(first, second, "sha256", 1.0, {})
+    store_edges(conn, [edge])
+    before = conn.execute(
+        "SELECT COUNT(*) FROM catalogue_duplicate_edges").fetchone()[0]
+    store_edges(conn, [edge])
+    after = conn.execute(
+        "SELECT COUNT(*) FROM catalogue_duplicate_edges").fetchone()[0]
+    assert (before, after) == (1, 1)
+    conn.close()
+
+
+def test_store_clusters_marks_exactly_one_keeper(tmp_path: Path) -> None:
+    conn = initialize_database(tmp_path / "c.db")
+    ids = _seed_documents(conn, 3)
+    cluster = DuplicateCluster(document_ids=sorted(ids), methods={"sha256"},
+                               relation=RELATION_DUPLICATE, status="auto")
+    scorecards = assign_keepers(
+        [cluster], {doc_id: DocumentQuality(doc_id) for doc_id in ids})
+    store_clusters(conn, [cluster], scorecards)
+    keepers = conn.execute(
+        "SELECT cluster_id, SUM(is_keeper) FROM catalogue_duplicate_members "
+        "GROUP BY cluster_id").fetchall()
+    assert [row[1] for row in keepers] == [1]
+    conn.close()
+
+
+def test_store_clusters_replace_preserves_human_decisions(tmp_path: Path) -> None:
+    # A confirmed or rejected cluster is a human decision and must survive
+    # a rerun; only automatic rows are replaced.
+    conn = initialize_database(tmp_path / "c.db")
+    ids = _seed_documents(conn, 4)
+    cursor = conn.execute(
+        "INSERT INTO catalogue_duplicate_clusters "
+        "(relation, status, methods, size, keeper_document_id) "
+        "VALUES ('duplicate', 'confirmed', 'sha256', 2, ?)", (ids[0],))
+    confirmed_id = int(cursor.lastrowid)
+    conn.execute(
+        "INSERT INTO catalogue_duplicate_members "
+        "(cluster_id, document_id, is_keeper, score, scorecard_json) "
+        "VALUES (?, ?, 1, 1.0, '{}'), (?, ?, 0, 0.0, '{}')",
+        (confirmed_id, ids[0], confirmed_id, ids[1]),
+    )
+    conn.execute(
+        "INSERT INTO catalogue_duplicate_clusters "
+        "(relation, status, methods, size, keeper_document_id) "
+        "VALUES ('duplicate', 'auto', 'sha256', 1, NULL)")
+    fresh = DuplicateCluster(document_ids=[ids[2], ids[3]],
+                             methods={"sha256"},
+                             relation=RELATION_DUPLICATE, status="auto",
+                             keeper_id=ids[2])
+    store_clusters(conn, [fresh],
+                   {0: {ids[2]: (1.0, {}), ids[3]: (0.0, {})}}, replace=True)
+    statuses = sorted(
+        row[0] for row in
+        conn.execute("SELECT status FROM catalogue_duplicate_clusters"))
+    assert statuses == ["auto", "confirmed"]
+    survivors = conn.execute(
+        "SELECT COUNT(*) FROM catalogue_duplicate_members WHERE cluster_id=?",
+        (confirmed_id,)).fetchone()[0]
+    assert survivors == 2
+    conn.close()
+
+
+def test_load_document_facts_tolerates_malformed_json(tmp_path: Path) -> None:
+    conn = initialize_database(tmp_path / "c.db")
+    conn.execute(
+        "INSERT INTO catalogue_local_documents "
+        "(sha256, source_path, file_size, media_type, metadata_json) "
+        "VALUES ('good', '/good.pdf', 10, ?, ?)",
+        (PDF, json.dumps({"title": "Padma", "authors": ["Manik"],
+                          "page_count": 100})),
+    )
+    conn.execute(
+        "INSERT INTO catalogue_local_documents "
+        "(sha256, source_path, file_size, media_type, metadata_json) "
+        "VALUES ('bad', '/bad.pdf', 10, ?, 'not json{')", (PDF,))
+    conn.commit()
+    qualities, _ = load_document_facts(conn)  # must not raise
+    by_path = {
+        row[0]: row[1] for row in conn.execute(
+            "SELECT source_path, id FROM catalogue_local_documents")
+    }
+    good = qualities[by_path["/good.pdf"]]
+    assert (good.has_title, good.has_authors) == (True, True)
+    bad = qualities[by_path["/bad.pdf"]]
+    assert (bad.has_title, bad.has_authors) == (False, False)
+    conn.close()
