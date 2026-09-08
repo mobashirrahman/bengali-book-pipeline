@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { initials } from '../lib/format'
 
 interface CoverImageProps {
@@ -12,6 +12,7 @@ interface CoverImageProps {
 
 export function CoverImage({ title, sourceUrl, accent, size = 'medium', className = '', attribution }: CoverImageProps) {
   const [state, setState] = useState<'loading' | 'loaded' | 'error'>(sourceUrl ? 'loading' : 'error')
+  useEffect(() => setState(sourceUrl ? 'loading' : 'error'), [sourceUrl])
   const hasImage = Boolean(sourceUrl) && state !== 'error'
   return (
     <div className={`cover cover--${size} ${className}`} style={{ '--cover-accent': accent } as React.CSSProperties}>

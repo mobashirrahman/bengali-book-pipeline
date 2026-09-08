@@ -313,6 +313,7 @@ class NormalizedAsset(BaseModel):
     document_id: int | None = None
     asset_type: str
     storage_uri: str
+    source_url: str | None = None
     sha256: str | None = None
     mime_type: str | None = None
     width: int | None = None
@@ -320,6 +321,10 @@ class NormalizedAsset(BaseModel):
     attribution: str | None = None
     rights: str | None = None
     is_selected: int = 0
+    status: str = "candidate"
+    verification_status: str = "candidate"
+    retrieved_at: str | None = None
+    metadata_json: str = "{}"
 
 
 class NormalizedWorkResponse(BaseModel):

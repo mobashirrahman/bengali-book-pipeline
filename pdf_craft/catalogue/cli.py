@@ -136,6 +136,7 @@ def cmd_cover(args: argparse.Namespace) -> None:
         register_local_file,
         register_remote_cover,
         select_cover,
+        verify_cover_batch,
     )
 
     db = CatalogueDB(args.db)
@@ -145,6 +146,19 @@ def cmd_cover(args: argparse.Namespace) -> None:
         result = register_local_file(db, args.edition_id, args.file, args.asset_root, source_record_id=args.source_record_id, attribution=args.attribution, rights=args.rights)
     elif args.action == "fetch":
         result = fetch_remote_cover(db, args.candidate_id, args.asset_root, max_bytes=args.max_bytes, timeout=args.timeout)
+    elif args.action == "verify-batch":
+        result = verify_cover_batch(
+            db, args.asset_root, limit=args.limit, after_id=args.after_id,
+            max_bytes=args.max_bytes, timeout=args.timeout,
+        )
+        print(
+            f"Verified cover batch: examined={result.examined} "
+            f"validated={result.validated} rejected={result.rejected} "
+            f"selected={result.selected} "
+            f"next_after_id={result.next_after_id} complete={result.complete}"
+        )
+        db.close()
+        return
     else:
         result = select_cover(db, args.edition_id, candidate_id=args.candidate_id, manual=args.manual, selected_by=args.selected_by)
     print(f"Cover asset {result.id}: {result.storage_uri}")
@@ -397,8 +411,8 @@ def main() -> None:
     p_ratings.add_argument("--batch-size", type=int, default=500)
     p_ratings.set_defaults(func=cmd_materialize_ratings)
 
-    p_cover = sub.add_parser("cover", help="Register, fetch, or select cover assets")
-    p_cover.add_argument("action", choices=("register-url", "register-file", "fetch", "select"))
+    p_cover = sub.add_parser("cover", help="Register, verify, fetch, or select cover assets")
+    p_cover.add_argument("action", choices=("register-url", "register-file", "fetch", "verify-batch", "select"))
     p_cover.add_argument("--db", default="catalogue.db")
     p_cover.add_argument("--edition-id", type=int)
     p_cover.add_argument("--candidate-id", type=int)
@@ -412,6 +426,8 @@ def main() -> None:
     p_cover.add_argument("--selected-by")
     p_cover.add_argument("--max-bytes", type=int, default=10 * 1024 * 1024)
     p_cover.add_argument("--timeout", type=float, default=20.0)
+    p_cover.add_argument("--limit", type=int, default=100)
+    p_cover.add_argument("--after-id", type=int)
     p_cover.add_argument("--dry-run", action="store_true")
     p_cover.set_defaults(func=cmd_cover)
 

@@ -36,7 +36,7 @@ describe('catalogue work mapping', () => {
       { id: 101, mediaType: 'application/pdf' },
       { id: 102, mediaType: 'application/epub+zip' },
     ])
-    expect(book.coverUrl).toBe('https://covers.example/book.jpg')
+    expect(book.coverUrl).toBeUndefined()
   })
 
   it('chooses a later readable edition when the first edition has no document', () => {
@@ -78,7 +78,7 @@ describe('catalogue work mapping', () => {
     const book = workToBook({
       id: 8, title: 'Local Cover', identifiers: [], sources: [], editions: [{
         id: 80, title: 'Local Cover', people: [], identifiers: [], sources: [], documents: [],
-        assets: [{ id: 42, asset_type: 'cover', storage_uri: 'sha256/cover.png', mime_type: 'image/png', is_selected: 1 }],
+        assets: [{ id: 42, asset_type: 'cover', storage_uri: 'sha256/cover.png', mime_type: 'image/png', width: 600, height: 900, verification_status: 'validated', is_selected: 1 }],
       }],
     }, (assetId) => `/v2/assets/${assetId}/content`)
     expect(book.coverUrl).toBe('/v2/assets/42/content')

@@ -50,14 +50,21 @@ def _people(conn: Any, edition_id: int) -> list[dict[str, Any]]:
         WHERE ep.edition_id=? ORDER BY ep.position, ep.role, p.id""", (edition_id,))
 
 
+_ASSET_FIELDS = """id, edition_id, document_id, asset_type, storage_uri, source_url,
+    sha256, mime_type, width, height, attribution, rights, is_selected, status,
+    retrieved_at, metadata_json,
+    CASE
+        WHEN status='rejected' THEN 'rejected'
+        WHEN sha256 IS NOT NULL AND mime_type IN ('image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/bmp')
+             AND width > 0 AND height > 0 AND storage_uri NOT LIKE 'remote:%' THEN 'validated'
+        ELSE 'candidate'
+    END AS verification_status"""
+
+
 def _assets(conn: Any, edition_id: int | None = None, document_id: int | None = None) -> list[dict[str, Any]]:
     if edition_id is not None:
-        return _many(conn, """SELECT id, edition_id, document_id, asset_type, storage_uri,
-            sha256, mime_type, width, height, attribution, rights, is_selected
-            FROM catalogue_assets WHERE edition_id=? ORDER BY is_selected DESC, id""", (edition_id,))
-    return _many(conn, """SELECT id, edition_id, document_id, asset_type, storage_uri,
-        sha256, mime_type, width, height, attribution, rights, is_selected
-        FROM catalogue_assets WHERE document_id=? ORDER BY is_selected DESC, id""", (document_id,))
+        return _many(conn, f"SELECT {_ASSET_FIELDS} FROM catalogue_assets WHERE edition_id=? ORDER BY is_selected DESC, id", (edition_id,))
+    return _many(conn, f"SELECT {_ASSET_FIELDS} FROM catalogue_assets WHERE document_id=? ORDER BY is_selected DESC, id", (document_id,))
 
 
 def get_work(conn: Any, work_id: int) -> dict[str, Any] | None:
@@ -165,7 +172,7 @@ def get_document(conn: Any, document_id: int) -> dict[str, Any] | None:
 
 
 def get_asset(conn: Any, asset_id: int) -> dict[str, Any] | None:
-    return _one(conn, "SELECT * FROM catalogue_assets WHERE id=?", (asset_id,))
+    return _one(conn, f"SELECT {_ASSET_FIELDS} FROM catalogue_assets WHERE id=?", (asset_id,))
 
 
 def stats(conn: Any) -> dict[str, Any]:

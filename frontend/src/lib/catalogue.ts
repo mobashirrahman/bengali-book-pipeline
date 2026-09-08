@@ -1,19 +1,30 @@
 import type { Asset, BookRecord, EditionResponse, WorkResponse } from './types'
 
 const safeDate = (value?: string | null) => value?.slice(0, 4) || '—'
-const publicCoverUrl = (value?: string | null) => {
-  if (!value) return undefined
-  const candidate = value.startsWith('remote:') ? value.slice('remote:'.length) : value
-  return /^https?:\/\//i.test(candidate) ? candidate : undefined
-}
-
 function coverDetails(asset: Asset | undefined, assetContentUrl?: (id: number) => string) {
   if (!asset) return { coverUrl: undefined, coverAssetId: undefined }
-  const selected = Boolean(asset.is_selected)
-  const remoteUrl = publicCoverUrl(asset.storage_uri)
-  if (remoteUrl) return { coverUrl: remoteUrl, coverAssetId: selected ? asset.id : undefined }
-  if (selected && assetContentUrl) return { coverUrl: assetContentUrl(asset.id), coverAssetId: asset.id }
-  return { coverUrl: undefined, coverAssetId: undefined }
+  const trusted = asset.verification_status === 'validated' && !asset.storage_uri.startsWith('remote:')
+  if (trusted && asset.is_selected && assetContentUrl) {
+    return {
+      coverUrl: assetContentUrl(asset.id),
+      coverAssetId: asset.id,
+      coverWidth: asset.width ?? undefined,
+      coverHeight: asset.height ?? undefined,
+      coverVerificationStatus: asset.verification_status,
+    }
+  }
+  return {
+    coverUrl: undefined,
+    coverAssetId: undefined,
+    coverWidth: trusted ? asset.width ?? undefined : undefined,
+    coverHeight: trusted ? asset.height ?? undefined : undefined,
+    coverVerificationStatus: asset.verification_status,
+  }
+}
+
+function coverAsset(assets: Asset[] | undefined) {
+  return assets?.find((candidate) =>
+    candidate.asset_type === 'cover' && candidate.verification_status === 'validated' && Boolean(candidate.is_selected) && !candidate.storage_uri.startsWith('remote:'))
 }
 
 export function workToBook(work: WorkResponse, assetContentUrl?: (id: number) => string): BookRecord {
@@ -22,7 +33,7 @@ export function workToBook(work: WorkResponse, assetContentUrl?: (id: number) =>
   const edition = work.editions.find((candidate) => candidate.documents.length > 0) ?? work.editions[0]
   const people = edition?.people.filter((person) => person.role === 'author' || !person.role) ?? []
   const author = people.map((person) => person.name).join(', ') || 'Unknown author'
-  const asset = edition?.assets.find((candidate) => candidate.is_selected) ?? edition?.assets[0]
+  const asset = coverAsset(edition?.assets)
   const cover = coverDetails(asset, assetContentUrl)
   return {
     id: String(work.id),
@@ -50,7 +61,7 @@ export function workToBook(work: WorkResponse, assetContentUrl?: (id: number) =>
 
 export function editionToBook(edition: EditionResponse, assetContentUrl?: (id: number) => string): BookRecord {
   const author = edition.people.map((person) => person.name).join(', ') || 'Unknown author'
-  const asset = edition.assets.find((candidate) => candidate.is_selected) ?? edition.assets[0]
+  const asset = coverAsset(edition.assets)
   const cover = coverDetails(asset, assetContentUrl)
   return {
     id: String(edition.work_id ?? edition.id),

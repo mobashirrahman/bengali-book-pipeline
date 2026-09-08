@@ -36,6 +36,7 @@ export interface Asset {
   document_id?: number | null
   asset_type: string
   storage_uri: string
+  source_url?: string | null
   sha256?: string | null
   mime_type?: string | null
   width?: number | null
@@ -43,6 +44,10 @@ export interface Asset {
   attribution?: string | null
   rights?: string | null
   is_selected: number
+  status?: string
+  verification_status?: 'candidate' | 'validated' | 'rejected' | string
+  retrieved_at?: string | null
+  metadata_json?: string
 }
 
 export type RatingStatus = 'available' | 'unavailable'
@@ -154,6 +159,9 @@ export interface BookRecord {
   coverUrl?: string
   coverAssetId?: number
   coverAttribution?: string
+  coverWidth?: number
+  coverHeight?: number
+  coverVerificationStatus?: string
   sourceLabel: string
   sourceKind: 'demo' | 'catalogue'
   editionId?: number

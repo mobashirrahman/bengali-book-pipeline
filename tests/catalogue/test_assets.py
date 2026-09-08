@@ -19,6 +19,8 @@ PNG = (b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\x0dIHDR" +
        b"\x00\x00\x00\x10\x00\x00\x00\x20\x08\x02\x00\x00\x00" + b"x")
 WEBP_VP8L = b"RIFF" + (13).to_bytes(4, "little") + b"WEBPVP8L" + (5).to_bytes(4, "little") + b"\x2f\x0f\xc0\x07\x00"
 WEBP_VP8 = b"RIFF" + (18).to_bytes(4, "little") + b"WEBPVP8 " + (10).to_bytes(4, "little") + b"\x00\x00\x00\x9d\x01\x2a\x10\x00\x20\x00"
+HIGH_PNG = (b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\x0dIHDR" +
+            (600).to_bytes(4, "big") + (900).to_bytes(4, "big") + b"\x08\x02\x00\x00\x00" + b"x")
 
 
 def _edition(db: CatalogueDB) -> int:
@@ -77,6 +79,53 @@ def test_fetch_rejects_html_and_wrong_content_type(tmp_path: Path) -> None:
     with pytest.raises(AssetError, match="content type"):
         fetch_remote_cover(db, candidate.id, tmp_path / "assets", client=html)
     html.close()
+
+
+def test_cover_verification_batch_is_bounded_resumable_and_idempotent(tmp_path: Path) -> None:
+    from pdf_craft.catalogue.assets import verify_cover_batch
+
+    db = CatalogueDB(tmp_path / "db.sqlite")
+    edition = _edition(db)
+    valid = register_remote_cover(db, edition, "https://example.test/valid.png")
+    low = register_remote_cover(db, edition, "https://example.test/low.png")
+    oversized = register_remote_cover(db, edition, "https://example.test/large.png")
+    invalid = register_remote_cover(db, edition, "https://example.test/invalid.png")
+    unsafe = register_remote_cover(db, edition, "http://127.0.0.1/private.png")
+    requests: list[str] = []
+
+    def transport(request: httpx.Request) -> httpx.Response:
+        requests.append(str(request.url))
+        if request.url.path.endswith("invalid.png"):
+            return httpx.Response(200, headers={"content-type": "image/png"}, content=b"not an image")
+        if request.url.path.endswith("valid.png"):
+            return httpx.Response(200, headers={"content-type": "image/png"}, content=HIGH_PNG)
+        if request.url.path.endswith("low.png"):
+            return httpx.Response(200, headers={"content-type": "image/png"}, content=PNG)
+        if request.url.path.endswith("large.png"):
+            return httpx.Response(200, headers={"content-type": "image/png", "content-length": "99"}, content=HIGH_PNG)
+        raise AssertionError(f"unexpected cover request: {request.url}")
+
+    client = httpx.Client(transport=httpx.MockTransport(transport))
+    first = verify_cover_batch(db, tmp_path / "assets", limit=5, max_bytes=50, client=client)
+    assert (first.examined, first.validated, first.rejected, first.selected) == (5, 1, 4, 1), first.outcomes
+    assert first.complete is True
+    assert requests == [
+        "https://example.test/valid.png", "https://example.test/low.png",
+        "https://example.test/large.png", "https://example.test/invalid.png",
+    ]
+    statuses = dict(db.conn.execute("SELECT id, status FROM catalogue_assets"))
+    assert statuses == {valid.id: "validated", low.id: "rejected", oversized.id: "rejected", invalid.id: "rejected", unsafe.id: "rejected"}
+    stored = db.conn.execute("SELECT storage_uri, width, height, metadata_json FROM catalogue_assets WHERE id=?", (valid.id,)).fetchone()
+    assert stored[0].startswith(str(tmp_path / "assets"))
+    assert (stored[1], stored[2]) == (600, 900)
+    assert db.conn.execute("SELECT is_selected FROM catalogue_assets WHERE id=?", (valid.id,)).fetchone()[0] == 1
+    assert '"status": "validated"' in stored[3]
+    assert db.conn.execute("SELECT COUNT(*) FROM catalogue_asset_provenance WHERE asset_id=?", (valid.id,)).fetchone()[0] == 1
+
+    second = verify_cover_batch(db, tmp_path / "assets", limit=5, after_id=first.next_after_id, client=client)
+    assert second.examined == 0
+    assert requests.count("https://example.test/valid.png") == 1
+    client.close()
 
 
 def test_ranking_and_manual_selection_retain_alternatives(tmp_path: Path) -> None:
