@@ -451,6 +451,100 @@ def cmd_stats(args: argparse.Namespace) -> None:
     db.close()
 
 
+def cmd_metadata_manifest(args: argparse.Namespace) -> None:
+    from .metadata_manifest import (
+        iter_paths, load_cover_index, load_path_list, summarize, update_manifest,
+    )
+
+    deferred = load_path_list(args.defer_list) if args.defer_list else None
+    readings = load_cover_index(args.cover_index) if args.cover_index else None
+    if args.dry_run:
+        paths = iter_paths(args.data, extensions=tuple(args.extensions))
+        if args.limit is not None:
+            paths = paths[:args.limit]
+        if deferred:
+            import os as _os
+
+            deferred_count = sum(
+                1 for p in paths if _os.path.abspath(p) in deferred)
+        else:
+            deferred_count = 0
+        print(f"Metadata manifest dry run: would examine {len(paths)} files "
+              f"({deferred_count} deferred)")
+        return
+    paths = iter_paths(args.data, extensions=tuple(args.extensions))
+    if args.limit is not None:
+        paths = paths[:args.limit]
+    report = update_manifest(
+        args.out, paths, force=args.force, read_embedded=not args.no_embedded,
+        cover_readings=readings, deferred=deferred,
+    )
+    from .metadata_manifest import load_manifest
+
+    summary = summarize(load_manifest(args.out))
+    print(f"Metadata manifest {args.out}: " + ", ".join(
+        f"{key}={value}" for key, value in report.items()))
+    print("Manifest accounting: " + ", ".join(
+        f"{key}={value}" for key, value in summary.items()))
+
+
+def cmd_metadata_cover(args: argparse.Namespace) -> None:
+    from .cover_export import export_covers, verify_covers
+
+    report = export_covers(
+        args.manifest, args.output_dir, limit=args.limit,
+        overwrite=args.overwrite, dry_run=args.dry_run,
+    )
+    print("Cover export" + (" (dry run)" if args.dry_run else "") + ": "
+          + ", ".join(f"{key}={value}" for key, value in report.items()))
+    if not args.dry_run:
+        check = verify_covers(args.manifest, args.output_dir)
+        print("Cover verification: " + ", ".join(
+            f"{key}={value}" for key, value in check.items()))
+
+
+def cmd_metadata_prepare(args: argparse.Namespace) -> None:
+    from .metadata_embed import prepare_plan, verify_plan
+
+    report = prepare_plan(
+        args.manifest, args.staging, plan_path=args.plan,
+        dry_run=args.dry_run, limit=args.limit,
+    )
+    print("Embed prepare" + (" (dry run)" if args.dry_run else "") + ": "
+          + ", ".join(f"{key}={value}" for key, value in report.items()))
+    if not args.dry_run and args.plan is not None:
+        check = verify_plan(args.plan)
+        print(f"Embed verify: checked={check['checked']} "
+              f"verified={check['verified']} mismatch={check['mismatch']} "
+              f"missing={check['missing']}")
+
+
+def cmd_metadata_apply(args: argparse.Namespace) -> None:
+    from .metadata_embed import apply_plan
+
+    report = apply_plan(args.plan, dry_run=args.dry_run)
+    print("Embed apply" + (" (dry run)" if args.dry_run else "") + ": "
+          + ", ".join(f"{key}={value}" for key, value in report.items()))
+
+
+def cmd_metadata_status(args: argparse.Namespace) -> None:
+    import json as _json
+
+    if not args.plan and not args.manifest:
+        print("Nothing to show: pass --manifest and/or --plan",
+              file=sys.stderr)
+        sys.exit(2)
+    if args.plan:
+        from .metadata_embed import status_report
+
+        print(_json.dumps(status_report(args.plan), ensure_ascii=False, indent=2))
+    if args.manifest:
+        from .metadata_manifest import load_manifest, summarize
+
+        print(_json.dumps(summarize(load_manifest(args.manifest)),
+                          ensure_ascii=False, indent=2))
+
+
 def cmd_serve(args: argparse.Namespace) -> None:
     import uvicorn
 
@@ -669,6 +763,67 @@ def main() -> None:
         "rollback", help="Restore exactly the moves one manifest records")
     p_rollback.add_argument("--manifest", required=True)
     p_rollback.set_defaults(func=cmd_dedupe_rollback)
+
+    p_meta = sub.add_parser(
+        "metadata",
+        help="Resumable metadata manifest, cover export, and safe embedding",
+    )
+    meta_sub = p_meta.add_subparsers(dest="metadata_action", required=True)
+
+    p_m_manifest = meta_sub.add_parser(
+        "manifest", help="Build or resume the accepted-metadata manifest")
+    p_m_manifest.add_argument("--data", required=True, help="Corpus root directory")
+    p_m_manifest.add_argument("--out", required=True, help="Manifest JSON path")
+    p_m_manifest.add_argument("--extensions", nargs="+", default=["pdf", "epub"])
+    p_m_manifest.add_argument("--force", action="store_true",
+                              help="Re-resolve even unchanged entries")
+    p_m_manifest.add_argument("--no-embedded", action="store_true",
+                              help="Skip reading embedded PDF/EPUB metadata")
+    p_m_manifest.add_argument("--defer-list",
+                              help="File with one source path per line to "
+                              "record as deferred (active consumers)")
+    p_m_manifest.add_argument("--cover-index",
+                              help="JSON cover-OCR index mapping source paths "
+                              "to title/author candidates")
+    p_m_manifest.add_argument("--limit", type=_non_negative_int, default=None)
+    p_m_manifest.add_argument("--dry-run", action="store_true",
+                              help="Count files without writing a manifest")
+    p_m_manifest.set_defaults(func=cmd_metadata_manifest)
+
+    p_m_cover = meta_sub.add_parser(
+        "cover-export", help="Export first-page covers for manifest PDFs")
+    p_m_cover.add_argument("--manifest", required=True, help="Manifest JSON path")
+    p_m_cover.add_argument("--output-dir", required=True,
+                           help="Content-addressed cover output directory")
+    p_m_cover.add_argument("--limit", type=_non_negative_int, default=None)
+    p_m_cover.add_argument("--overwrite", action="store_true")
+    p_m_cover.add_argument("--dry-run", action="store_true",
+                           help="Count without rendering or writing")
+    p_m_cover.set_defaults(func=cmd_metadata_cover)
+
+    p_m_prepare = meta_sub.add_parser(
+        "prepare", help="Stage embedded-metadata copies without touching sources")
+    p_m_prepare.add_argument("--manifest", required=True, help="Manifest JSON path")
+    p_m_prepare.add_argument("--staging", required=True,
+                             help="Staging directory for embedded copies")
+    p_m_prepare.add_argument("--plan", default=None, help="Plan JSON path")
+    p_m_prepare.add_argument("--limit", type=_non_negative_int, default=None)
+    p_m_prepare.add_argument("--dry-run", action="store_true",
+                             help="Count without writing staged copies")
+    p_m_prepare.set_defaults(func=cmd_metadata_prepare)
+
+    p_m_apply = meta_sub.add_parser(
+        "apply", help="Atomically apply staged copies with changed-source rejection")
+    p_m_apply.add_argument("--plan", required=True, help="Plan JSON path")
+    p_m_apply.add_argument("--dry-run", action="store_true",
+                           help="Count without overwriting sources")
+    p_m_apply.set_defaults(func=cmd_metadata_apply)
+
+    p_m_status = meta_sub.add_parser(
+        "status", help="Show manifest accounting and plan recovery state")
+    p_m_status.add_argument("--manifest", default=None, help="Manifest JSON path")
+    p_m_status.add_argument("--plan", default=None, help="Plan JSON path")
+    p_m_status.set_defaults(func=cmd_metadata_status)
 
     p_serve = sub.add_parser("serve", help="Start FastAPI server")
     p_serve.add_argument("--db", default="catalogue.db")
