@@ -234,8 +234,18 @@ python -m pdf_craft.catalogue.cli ingest-local \
 python -m pdf_craft.catalogue.cli stats \
   --db pdf-craft-output/catalogue/catalogue.db
 python -m pdf_craft.catalogue.cli serve \
-  --db pdf-craft-output/catalogue/catalogue.db
+  --db pdf-craft-output/catalogue/catalogue.db \
+  --content-root /absolute/path/to/approved/book/files
 ```
+
+The API does not serve files unless an approved content root is configured.
+Set `--content-root` or `CATALOGUE_CONTENT_ROOT`; the reader uses
+`/v2/documents/{id}/content` and downloads use `/v2/documents/{id}/download`.
+Paths are resolved from catalogue locations and must remain below that root,
+including after symlink resolution. Both endpoints support `HEAD`, single byte
+ranges, ETags, and the stored media type. Keep the content root read-only for
+the API process and point it at a deployment-specific mount rather than
+putting a machine-local path into the database.
 
 Stage supplied source files before materializing them:
 

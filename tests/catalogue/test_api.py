@@ -71,6 +71,74 @@ def test_v2_requests_use_independent_connections(tmp_path: Path) -> None:
     assert first.status_code == second.status_code == 200
 
 
+def test_v2_document_content_supports_head_ranges_and_downloads(tmp_path: Path) -> None:
+    payload = b"0123456789abcdef"
+    (tmp_path / "alpha.pdf").write_bytes(payload)
+    _, _, document, _ = _database(tmp_path / "catalogue.db")
+    client = TestClient(init_app(tmp_path / "catalogue.db", content_root=tmp_path))
+
+    full = client.get(f"/v2/documents/{document}/content")
+    assert full.status_code == 200
+    assert full.content == payload
+    assert full.headers["content-type"] == "application/pdf"
+    assert full.headers["accept-ranges"] == "bytes"
+    assert full.headers["content-length"] == str(len(payload))
+
+    head = client.head(f"/v2/documents/{document}/content")
+    assert head.status_code == 200
+    assert head.content == b""
+    assert head.headers["content-length"] == str(len(payload))
+
+    ranged = client.get(f"/v2/documents/{document}/content", headers={"Range": "bytes=2-5"})
+    assert ranged.status_code == 206
+    assert ranged.content == payload[2:6]
+    assert ranged.headers["content-range"] == f"bytes 2-5/{len(payload)}"
+
+    suffix = client.get(f"/v2/documents/{document}/content", headers={"Range": "bytes=-4"})
+    assert suffix.status_code == 206
+    assert suffix.content == payload[-4:]
+
+    invalid = client.get(f"/v2/documents/{document}/content", headers={"Range": "bytes=999-"})
+    assert invalid.status_code == 416
+    assert invalid.headers["content-range"] == f"bytes */{len(payload)}"
+
+    download = client.head(f"/v2/documents/{document}/download")
+    assert download.status_code == 200
+    assert download.headers["content-disposition"].startswith("attachment; filename*=")
+
+
+def test_v2_document_content_is_disabled_without_an_approved_root(tmp_path: Path) -> None:
+    _, _, document, _ = _database(tmp_path / "catalogue.db")
+    client = TestClient(init_app(tmp_path / "catalogue.db"))
+    response = client.get(f"/v2/documents/{document}/content")
+    assert response.status_code == 503
+
+
+def test_v2_document_content_rejects_paths_outside_the_approved_root(tmp_path: Path) -> None:
+    outside = tmp_path / "outside.pdf"
+    outside.write_bytes(b"private")
+    db_path = tmp_path / "catalogue.db"
+    db = CatalogueDB(db_path)
+    document = db.conn.execute(
+        "INSERT INTO catalogue_local_documents (sha256, source_path, file_size) VALUES ('outside', ?, 7)",
+        (str(outside),),
+    ).lastrowid
+    db.conn.commit()
+    db.close()
+
+    client = TestClient(init_app(db_path, content_root=tmp_path / "approved"))
+    response = client.get(f"/v2/documents/{document}/content")
+    assert response.status_code == 404
+
+
+def test_v2_api_allows_the_documented_vite_origin(tmp_path: Path) -> None:
+    _database(tmp_path / "catalogue.db")
+    client = TestClient(init_app(tmp_path / "catalogue.db"))
+    response = client.get("/v2/health", headers={"Origin": "http://127.0.0.1:4173"})
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:4173"
+
+
 def test_v2_search_cursor_preserves_case_insensitive_order(tmp_path: Path) -> None:
     db_path = tmp_path / "catalogue.db"
     db = CatalogueDB(db_path)

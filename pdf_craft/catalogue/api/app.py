@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import os
 from collections.abc import Generator, Sequence
+from email.utils import formatdate
+import mimetypes
 from pathlib import Path
+from urllib.parse import quote
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from starlette.responses import StreamingResponse
 
 from .. import read_repository
 from ..database import CatalogueDB
@@ -17,7 +21,12 @@ app = FastAPI(title="pdf-craft catalogue", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://localhost:4173",
+        "http://127.0.0.1:4173",
+    ],
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
     allow_credentials=False,
@@ -26,6 +35,7 @@ app.add_middleware(
 _backend_kind: str | None = None
 _db_path: Path | None = None
 _postgres_dsn: str | None = None
+_content_root: Path | None = None
 
 
 def get_db() -> Generator[CatalogueDB | PostgresCatalogueDB, None, None]:
@@ -60,9 +70,10 @@ def init_app(
     cors_origins: Sequence[str] | None = None,
     *,
     postgres_dsn: str | None = None,
+    content_root: str | Path | None = None,
 ) -> FastAPI:
     """Configure explicit SQLite or PostgreSQL request-scoped connections."""
-    global _backend_kind, _db_path, _postgres_dsn
+    global _backend_kind, _db_path, _postgres_dsn, _content_root
     if postgres_dsn is None and isinstance(db_path, str) and db_path.startswith(("postgres://", "postgresql://")):
         postgres_dsn = db_path
         db_path = None
@@ -85,6 +96,8 @@ def init_app(
         raise ValueError(
             "Catalogue API requires an SQLite path or PostgreSQL DSN; no backend fallback is configured"
         )
+    configured_root = content_root if content_root is not None else os.environ.get("CATALOGUE_CONTENT_ROOT")
+    _content_root = Path(configured_root).expanduser().resolve() if configured_root else None
     if cors_origins is not None:
         app.add_middleware(
             CORSMiddleware,
@@ -94,6 +107,107 @@ def init_app(
             allow_credentials=False,
         )
     return app
+
+
+def _content_path(document: dict, content_root: Path) -> Path | None:
+    """Resolve a catalogue path while keeping it below the approved root."""
+    root = content_root.resolve()
+    paths = [document.get("source_path")]
+    paths.extend(location.get("source_path") for location in document.get("locations", []))
+    for raw_path in paths:
+        if not raw_path:
+            continue
+        candidate = Path(str(raw_path))
+        if not candidate.is_absolute():
+            candidate = root / candidate
+        try:
+            resolved = candidate.resolve(strict=True)
+            resolved.relative_to(root)
+        except (OSError, RuntimeError, ValueError):
+            continue
+        if resolved.is_file():
+            return resolved
+    return None
+
+
+def _byte_range(value: str | None, size: int) -> tuple[int, int] | None:
+    if not value:
+        return 0, size - 1
+    if not value.startswith("bytes=") or "," in value:
+        raise ValueError("invalid range")
+    spec = value[6:].strip()
+    if "-" not in spec:
+        raise ValueError("invalid range")
+    start_text, end_text = spec.split("-", 1)
+    try:
+        if not start_text:
+            suffix = int(end_text)
+            if suffix <= 0:
+                raise ValueError
+            start, end = max(size - suffix, 0), size - 1
+        else:
+            start = int(start_text)
+            end = int(end_text) if end_text else size - 1
+            if start < 0 or end < start:
+                raise ValueError
+            end = min(end, size - 1)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("invalid range") from exc
+    if size <= 0 or start >= size:
+        raise ValueError("invalid range")
+    return start, end
+
+
+def _content_response(
+    document: dict,
+    path: Path,
+    request: Request,
+    *,
+    download: bool,
+    head: bool,
+) -> Response:
+    size = path.stat().st_size
+    try:
+        start, end = _byte_range(request.headers.get("range"), size)
+    except ValueError:
+        return Response(
+            status_code=416,
+            headers={"Content-Range": f"bytes */{size}", "Accept-Ranges": "bytes"},
+        )
+    assert start is not None and end is not None
+    length = end - start + 1
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Length": str(length),
+        "Content-Range": f"bytes {start}-{end}/{size}" if request.headers.get("range") else "",
+        "ETag": f'"{document["sha256"]}"',
+        "Last-Modified": formatdate(path.stat().st_mtime, usegmt=True),
+    }
+    if not headers["Content-Range"]:
+        del headers["Content-Range"]
+    if download:
+        headers["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(path.name)}"
+    media_type = document.get("media_type") or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    if request.headers.get("if-none-match") == headers["ETag"] and not request.headers.get("range"):
+        return Response(status_code=304, headers={"ETag": headers["ETag"], "Accept-Ranges": "bytes"})
+    if head:
+        return Response(status_code=206 if request.headers.get("range") else 200, media_type=media_type, headers=headers)
+
+    def iterator() -> Generator[bytes, None, None]:
+        with path.open("rb") as stream:
+            stream.seek(start)
+            remaining = length
+            while remaining:
+                chunk = stream.read(min(1024 * 1024, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+                yield chunk
+
+    return StreamingResponse(
+        iterator(), status_code=206 if request.headers.get("range") else 200,
+        media_type=media_type, headers=headers,
+    )
 
 
 # ── Pydantic models ────────────────────────────────────────────────
@@ -313,6 +427,42 @@ def normalized_document(document_id: int, db: CatalogueDB | PostgresCatalogueDB 
     if row is None:
         raise HTTPException(status_code=404, detail="Document not found")
     return NormalizedDocumentResponse(**row)
+
+
+def _serve_document_content(
+    document_id: int,
+    request: Request,
+    db: CatalogueDB | PostgresCatalogueDB,
+    *,
+    download: bool,
+) -> Response:
+    if _content_root is None:
+        raise HTTPException(status_code=503, detail="Document content delivery is not configured")
+    row = read_repository.get_document(db.conn, document_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    path = _content_path(row, _content_root)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Document content is unavailable")
+    return _content_response(row, path, request, download=download, head=request.method == "HEAD")
+
+
+@app.api_route("/v2/documents/{document_id}/content", methods=["GET", "HEAD"])
+def document_content(
+    document_id: int,
+    request: Request,
+    db: CatalogueDB | PostgresCatalogueDB = Depends(get_db),
+) -> Response:
+    return _serve_document_content(document_id, request, db, download=False)
+
+
+@app.api_route("/v2/documents/{document_id}/download", methods=["GET", "HEAD"])
+def document_download(
+    document_id: int,
+    request: Request,
+    db: CatalogueDB | PostgresCatalogueDB = Depends(get_db),
+) -> Response:
+    return _serve_document_content(document_id, request, db, download=True)
 
 
 @app.get("/v2/assets/{asset_id}", response_model=NormalizedAsset)

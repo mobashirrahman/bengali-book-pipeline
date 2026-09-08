@@ -307,7 +307,7 @@ def cmd_serve(args: argparse.Namespace) -> None:
 
     from .api.app import init_app
 
-    app = init_app(args.db, postgres_dsn=args.postgres_dsn)
+    app = init_app(args.db, postgres_dsn=args.postgres_dsn, content_root=args.content_root)
     uvicorn.run(app, host=args.host, port=args.port)
 
 
@@ -449,6 +449,10 @@ def main() -> None:
     p_serve.add_argument("--postgres-dsn", help="Use PostgreSQL for normalized /v2 reads")
     p_serve.add_argument("--host", default="0.0.0.0")
     p_serve.add_argument("--port", type=int, default=8000)
+    p_serve.add_argument(
+        "--content-root",
+        help="Approved root for serving local PDF/EPUB documents (also CATALOGUE_CONTENT_ROOT)",
+    )
     p_serve.set_defaults(func=cmd_serve)
 
     args = parser.parse_args()
