@@ -53,6 +53,21 @@ describe('catalogue API adapter', () => {
     await expect(createCatalogueApi().health()).rejects.toBe(abort)
   })
 
+  it('requests only readable works when asked', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }))
+    await createCatalogueApi('http://localhost:8000').works({ limit: 24, hasDocuments: true })
+    expect(fetchMock).toHaveBeenCalledWith('http://localhost:8000/v2/works?limit=24&has_documents=true', expect.objectContaining({ headers: { Accept: 'application/json' } }))
+  })
+
+  it('passes the additive readable filter on search only when asked', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ items: [], next: null }), { status: 200 })))
+    const api = createCatalogueApi('http://localhost:8000')
+    await api.search('night', { limit: 12, hasDocuments: true })
+    expect(fetchMock).toHaveBeenNthCalledWith(1, 'http://localhost:8000/v2/search?q=night&limit=12&has_documents=true', expect.objectContaining({ headers: { Accept: 'application/json' } }))
+    await api.search('night', { limit: 12 })
+    expect(fetchMock).toHaveBeenNthCalledWith(2, 'http://localhost:8000/v2/search?q=night&limit=12', expect.objectContaining({ headers: { Accept: 'application/json' } }))
+  })
+
   it('exposes protected content and download URLs from the configured API origin', () => {
     const api = createCatalogueApi('https://catalogue.example.test/')
     expect(api.documentContentUrl(42)).toBe('https://catalogue.example.test/v2/documents/42/content')

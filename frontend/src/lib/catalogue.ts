@@ -1,4 +1,5 @@
-import type { Asset, BookRecord, EditionResponse, WorkResponse } from './types'
+import type { Asset, BookDocument, BookRecord, DataMode, EditionResponse, WorkResponse, WorkSummary } from './types'
+import { isAbortError, type CatalogueApi } from './api'
 
 const safeDate = (value?: string | null) => value?.slice(0, 4) || '—'
 function coverDetails(asset: Asset | undefined, assetContentUrl?: (id: number) => string) {
@@ -35,6 +36,10 @@ export function workToBook(work: WorkResponse, assetContentUrl?: (id: number) =>
   const author = people.map((person) => person.name).join(', ') || 'Unknown author'
   const asset = coverAsset(edition?.assets)
   const cover = coverDetails(asset, assetContentUrl)
+  // Aggregate accepted documents across every edition so a readable file on
+  // a non-primary edition is never hidden. Primary-edition metadata (cover,
+  // author, pages) still comes from the preferred edition above.
+  const documents = collectDocuments(work.editions)
   return {
     id: String(work.id),
     workId: work.id,
@@ -53,10 +58,27 @@ export function workToBook(work: WorkResponse, assetContentUrl?: (id: number) =>
     coverAttribution: asset?.attribution ?? undefined,
     sourceLabel: work.sources.join(', ') || 'Catalogue API',
     sourceKind: 'catalogue',
-    documents: (edition?.documents ?? []).map((document) => ({ id: document.id, mediaType: document.media_type })),
+    documents,
     tags: [work.language, edition?.publisher].filter((value): value is string => Boolean(value)),
     ratings: work.ratings,
   }
+}
+
+function collectDocuments(editions: WorkResponse['editions']): BookDocument[] {  const documents: BookDocument[] = []
+  const seen = new Set<number>()
+  for (const edition of editions ?? []) {
+    for (const document of edition.documents ?? []) {
+      if (seen.has(document.id)) continue
+      seen.add(document.id)
+      documents.push({
+        id: document.id,
+        mediaType: document.media_type,
+        editionId: edition.id,
+        editionTitle: edition.title ?? undefined,
+      })
+    }
+  }
+  return documents
 }
 
 export function editionToBook(edition: EditionResponse, assetContentUrl?: (id: number) => string): BookRecord {
@@ -81,7 +103,70 @@ export function editionToBook(edition: EditionResponse, assetContentUrl?: (id: n
     coverAttribution: asset?.attribution ?? undefined,
     sourceLabel: edition.sources.join(', ') || 'Catalogue API',
     sourceKind: 'catalogue',
-    documents: edition.documents.map((document) => ({ id: document.id, mediaType: document.media_type })),
+    documents: edition.documents.map((document) => ({ id: document.id, mediaType: document.media_type, editionId: edition.id, editionTitle: edition.title ?? undefined })),
     tags: [edition.language, edition.publisher].filter((value): value is string => Boolean(value)),
   }
+}
+
+export function filterReadable(books: BookRecord[], readableOnly: boolean, mode: DataMode): BookRecord[] {
+  // Demo records carry no files, so the toggle only narrows live catalogue
+  // results; demo browsing is unaffected.
+  if (!readableOnly || mode !== 'live') return books
+  return books.filter((book) => book.documents.length > 0)
+}
+
+export function uniqueSearchWorkIds(items: WorkSummary[]): number[] {
+  // /v2/search returns a work row and an edition row for the same book, so
+  // collapse to unique work ids in API order before slicing or hydrating.
+  // Person rows never become books.
+  const seen = new Set<number>()
+  const ids: number[] = []
+  for (const item of items) {
+    if (item.kind === 'person') continue
+    const workId = item.work_id ?? item.id
+    if (seen.has(workId)) continue
+    seen.add(workId)
+    ids.push(workId)
+  }
+  return ids
+}
+
+export interface DiscoverSearchOptions {
+  readableOnly?: boolean
+  signal?: AbortSignal
+}
+
+export async function discoverSearch(
+  api: Pick<CatalogueApi, 'search' | 'works' | 'work' | 'assetContentUrl'>,
+  query: string,
+  options: DiscoverSearchOptions = {},
+): Promise<BookRecord[]> {
+  if (!query.trim()) {
+    // An empty query is browsing, not searching: a LIKE '%a%' scan returns
+    // arbitrary metadata-only works, so list readable works instead and
+    // hydrate them exactly like the home shelf does.
+    const summaries = await api.works({ limit: 24, hasDocuments: true, signal: options.signal })
+    return Promise.all(summaries.map(async (summary) => {
+      try {
+        return workToBook(await api.work(summary.id, options.signal), api.assetContentUrl)
+      } catch (reason: unknown) {
+        if (isAbortError(reason) || options.signal?.aborted) throw reason
+        return workToBook(summary, api.assetContentUrl)
+      }
+    }))
+  }
+  const response = await api.search(query.trim(), {
+    limit: 24,
+    hasDocuments: options.readableOnly ? true : undefined,
+    signal: options.signal,
+  })
+  const details = await Promise.all(uniqueSearchWorkIds(response.items).slice(0, 12).map(async (workId) => {
+    try {
+      return workToBook(await api.work(workId, options.signal), api.assetContentUrl)
+    } catch (reason: unknown) {
+      if (isAbortError(reason)) throw reason
+      return undefined
+    }
+  }))
+  return details.filter((book): book is BookRecord => Boolean(book))
 }

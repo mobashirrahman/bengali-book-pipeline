@@ -4,7 +4,7 @@ import { Header, MobileNav } from './components/Header'
 import { StatusBanner } from './components/StatusBanner'
 import { createCatalogueApi, isAbortError } from './lib/api'
 import { DEMO_BOOKS, findDemoBook } from './lib/demoData'
-import { workToBook } from './lib/catalogue'
+import { discoverSearch, workToBook } from './lib/catalogue'
 import { parseRoute, routeHref } from './lib/router'
 import type { BookRecord, DataMode, Route, StatsResponse } from './lib/types'
 
@@ -60,10 +60,22 @@ export default function App() {
     setLoading(true)
     setError(undefined)
     try {
-      const [health, workRows, catalogueStats] = await Promise.all([api.health(signal), api.works({ limit: 24, signal }), api.stats(signal)])
+      const [health, workRows, catalogueStats] = await Promise.all([api.health(signal), api.works({ limit: 24, hasDocuments: true, signal }), api.stats(signal)])
       if (!current()) return
       if (health.status !== 'ok') throw new Error('The catalogue health check did not return an OK status.')
-      setBooks(workRows.map((work) => workToBook(work, api.assetContentUrl)))
+      // /v2/works list items carry no editions, so hydrate each readable work
+      // to its accepted PDF/EPUB documents. A failed detail fetch falls back
+      // to the summary mapping instead of dropping the book from the shelf.
+      const hydrated = await Promise.all(workRows.map(async (summary) => {
+        try {
+          return workToBook(await api.work(summary.id, signal), api.assetContentUrl)
+        } catch (reason: unknown) {
+          if (isAbortError(reason) || signal?.aborted) throw reason
+          return workToBook(summary, api.assetContentUrl)
+        }
+      }))
+      if (!current()) return
+      setBooks(hydrated)
       setStats(catalogueStats)
       setMode('live')
     } catch (reason: unknown) {
@@ -88,16 +100,13 @@ export default function App() {
   const selectedId = route.name === 'work' || route.name === 'reader' ? route.id : undefined
   const selectedBook = books.find((book) => book.id === selectedId) ?? (mode === 'demo' && selectedId ? findDemoBook(selectedId) : undefined)
 
-  const apiSearch = useCallback(async (query: string, signal?: AbortSignal) => {
+  const apiSearch = useCallback(async (query: string, options: { readableOnly: boolean; signal?: AbortSignal }) => {
     if (mode === 'demo') return []
-    const response = await api.search(query || 'a', { limit: 24, signal })
-    const details = await Promise.all(response.items.filter((item) => item.kind !== 'person').slice(0, 12).map(async (item) => {
-      try { return workToBook(await api.work(item.work_id ?? item.id, signal), api.assetContentUrl) } catch (reason: unknown) {
-        if (isAbortError(reason)) throw reason
-        return undefined
-      }
-    }))
-    return details.filter((book): book is BookRecord => Boolean(book))
+    // De-duplication, empty-query browsing and the server-side readable
+    // filter live in discoverSearch so they stay unit-testable; the
+    // client-side filterReadable in DiscoverView remains as a safety net for
+    // works whose detail hydration failed.
+    return discoverSearch(api, query, options)
   }, [mode])
 
   const routeBook = useRouteBook(route, mode, selectedBook, books)

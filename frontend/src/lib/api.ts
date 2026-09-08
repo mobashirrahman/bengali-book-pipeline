@@ -35,8 +35,8 @@ export function isAbortError(reason: unknown): boolean {
 export interface CatalogueApi {
   health(signal?: AbortSignal): Promise<HealthResponse>
   stats(signal?: AbortSignal): Promise<StatsResponse>
-  search(query: string, options?: { limit?: number; after?: string; signal?: AbortSignal }): Promise<SearchResponse>
-  works(options?: { limit?: number; after?: number; signal?: AbortSignal }): Promise<WorkResponse[]>
+  search(query: string, options?: { limit?: number; after?: string; hasDocuments?: boolean; signal?: AbortSignal }): Promise<SearchResponse>
+  works(options?: { limit?: number; after?: number; hasDocuments?: boolean; signal?: AbortSignal }): Promise<WorkResponse[]>
   work(id: number, signal?: AbortSignal): Promise<WorkResponse>
   edition(id: number, signal?: AbortSignal): Promise<EditionResponse>
   document(id: number, signal?: AbortSignal): Promise<DocumentResponse>
@@ -87,11 +87,13 @@ export function createCatalogueApi(baseUrl = ''): CatalogueApi {
     search: (query, options = {}) => {
       const params = new URLSearchParams({ q: query, limit: String(options.limit ?? 20) })
       if (options.after) params.set('after', options.after)
+      if (options.hasDocuments) params.set('has_documents', 'true')
       return request<SearchResponse>(`/v2/search?${params}`, options.signal)
     },
     works: (options = {}) => {
       const params = new URLSearchParams({ limit: String(options.limit ?? 20) })
       if (options.after !== undefined) params.set('after', String(options.after))
+      if (options.hasDocuments) params.set('has_documents', 'true')
       return request<WorkResponse[]>(`/v2/works?${params}`, options.signal)
     },
     work: (id, signal) => request<WorkResponse>(`/v2/works/${encodeURIComponent(id)}`, signal),

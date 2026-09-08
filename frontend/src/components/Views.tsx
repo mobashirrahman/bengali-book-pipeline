@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ApiError, createCatalogueApi, isAbortError } from '../lib/api'
 import type { BookDocument, BookRecord, DataMode, RatingsResponse, Route, StatsResponse } from '../lib/types'
+import { filterReadable } from '../lib/catalogue'
 import { DEMO_BOOKS, DEMO_CATEGORIES, findDemoBook, searchDemoBooks } from '../lib/demoData'
 import { CoverImage } from './CoverImage'
 import { Shelf } from './Shelf'
@@ -39,14 +40,14 @@ export function HomeView({ books, mode, navigate, onOpen, stats, loading, error,
       <div className="hero__cover"><CoverImage title={feature.title} sourceUrl={feature.coverUrl} accent={feature.accent} size="large" attribution={feature.coverAttribution} /><span className="hero__cover-note">01 / featured work</span></div>
       <div className="hero__aside"><span className="hero__aside-line" /><p>“A good book doesn’t fill the silence. It teaches you how to hear it.”</p><span className="hero__aside-author">— The Folio Journal</span></div>
     </section>
-    <section className="stats-strip wrap" aria-label="Catalogue snapshot"><div><strong>{stats?.works ? compact(stats.works) : '08'}</strong><span>works to wander</span></div><div><strong>∞</strong><span>ways to begin</span></div><div><strong>01</strong><span>quiet place</span></div></section>
+    <section className="stats-strip wrap" aria-label="Catalogue snapshot"><div><strong>{stats?.works ? compact(stats.works) : '08'}</strong><span>works to wander</span></div><div><strong>∞</strong><span>ways to begin</span></div><div><strong>{stats?.readable_works !== undefined ? compact(stats.readable_works) : '01'}</strong><span>{stats?.readable_works !== undefined ? 'readable now' : 'quiet place'}</span></div></section>
     <div className="wrap page-section"><Shelf title="Picked for your next hour" kicker="A little time well spent" books={recent} onOpen={onOpen} action="View all" onAction={() => navigate('/discover')} /><Shelf title="Essays for staying curious" kicker="Keep looking" books={essays} onOpen={onOpen} action="Explore essays" onAction={() => navigate('/discover?q=Essays')} /><Shelf title="The natural world, noticed" kicker="Out there, in here" books={nature} onOpen={onOpen} /></div>
   </main>
 }
 
 function compact(value: number) { return new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(value) }
 
-interface DiscoverProps extends ViewProps { initialQuery: string; apiSearch: (query: string, signal?: AbortSignal) => Promise<BookRecord[]>; searchError?: string }
+interface DiscoverProps extends ViewProps { initialQuery: string; apiSearch: (query: string, options: { readableOnly: boolean; signal?: AbortSignal }) => Promise<BookRecord[]>; searchError?: string }
 
 export function DiscoverView({ books, mode, navigate, onOpen, initialQuery, apiSearch, searchError }: DiscoverProps) {
   const [query, setQuery] = useState(initialQuery)
@@ -55,6 +56,7 @@ export function DiscoverView({ books, mode, navigate, onOpen, initialQuery, apiS
   const [isSearching, setIsSearching] = useState(false)
   const [error, setError] = useState(searchError)
   const [searchAttempt, setSearchAttempt] = useState(0)
+  const [readableOnly, setReadableOnly] = useState(true)
   useEffect(() => { setQuery(initialQuery); setActiveQuery(initialQuery) }, [initialQuery])
   useEffect(() => { if (searchError) setError(searchError) }, [searchError])
   useEffect(() => {
@@ -62,7 +64,10 @@ export function DiscoverView({ books, mode, navigate, onOpen, initialQuery, apiS
     const controller = new AbortController()
     let stale = false
     setIsSearching(true); setError(undefined)
-    apiSearch(activeQuery, controller.signal).then((next) => {
+    // The readable filter runs server-side, so toggling the checkbox refetches
+    // instead of only re-filtering; filterReadable below stays as a safety net
+    // for works whose detail hydration failed.
+    apiSearch(activeQuery, { readableOnly, signal: controller.signal }).then((next) => {
       if (stale) return
       setResults(next)
       // A newer search succeeding clears a prior catalogue/search error
@@ -74,27 +79,32 @@ export function DiscoverView({ books, mode, navigate, onOpen, initialQuery, apiS
       setError(reason instanceof Error ? reason.message : 'Search failed')
     }).finally(() => { if (!stale && !controller.signal.aborted) setIsSearching(false) })
     return () => { stale = true; controller.abort() }
-  }, [activeQuery, apiSearch, mode, searchAttempt])
+  }, [activeQuery, apiSearch, mode, readableOnly, searchAttempt])
   const retrySearch = () => setSearchAttempt((attempt) => attempt + 1)
   const submit = (event: React.FormEvent) => { event.preventDefault(); navigate(`/discover${query.trim() ? `?q=${encodeURIComponent(query.trim())}` : ''}`); setActiveQuery(query.trim()) }
   const activeCategory = useMemo(() => DEMO_CATEGORIES.find((category) => category.toLocaleLowerCase() === activeQuery.toLocaleLowerCase()), [activeQuery])
   const filtered = activeCategory && mode === 'demo' ? results.filter((book) => book.category === activeCategory) : results
-  const showLoading = isSearching && filtered.length === 0
-  const showEmpty = !isSearching && filtered.length === 0 && !error
-  const showSearchError = !isSearching && filtered.length === 0 && Boolean(error)
+  const visible = filterReadable(filtered, readableOnly, mode)
+  const hiddenByFilter = filtered.length - visible.length
+  const showLoading = isSearching && visible.length === 0
+  const showEmpty = !isSearching && visible.length === 0 && !error
+  const showSearchError = !isSearching && visible.length === 0 && Boolean(error)
   return <main className="wrap discover-page">
     <div className="page-intro"><p className="eyebrow">The library · {mode === 'demo' ? 'local preview' : 'live catalogue'}</p><h1>Find your next<br /><em>good book.</em></h1><p>Search the collection by title, author, or idea. Take your time.</p></div>
     <form className="large-search" onSubmit={submit} role="search"><span aria-hidden="true">⌕</span><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Try “night”, “garden”, or an author" aria-label="Search the library" /><button className="button button--dark" type="submit">Search</button></form>
     <div className="category-tabs" aria-label="Browse by category"><button type="button" className={!activeQuery ? 'is-active' : ''} aria-pressed={!activeQuery} onClick={() => { setQuery(''); setActiveQuery(''); navigate('/discover') }}>All books</button>{DEMO_CATEGORIES.map((category) => <button type="button" key={category} className={activeCategory === category ? 'is-active' : ''} aria-pressed={activeCategory === category} onClick={() => { setQuery(category); setActiveQuery(category); navigate(`/discover?q=${category}`) }}>{category}</button>)}</div>
     {error && <div className="inline-error" role="alert"><strong>Couldn’t reach the catalogue.</strong> {error}<button type="button" onClick={retrySearch} aria-label="Retry search">Retry</button></div>}
-    <div className="results-heading"><div><p className="eyebrow" aria-live="polite">{isSearching ? 'Searching...' : `${filtered.length} ${filtered.length === 1 ? 'result' : 'results'}`}</p><h2>{activeQuery ? `Results for “${activeQuery}”` : 'All books'}</h2></div><span className="results-heading__sort">Curated order <span aria-hidden="true">⌄</span></span></div>
+    <div className="results-heading"><div><p className="eyebrow" aria-live="polite">{isSearching ? 'Searching...' : `${visible.length} ${visible.length === 1 ? 'result' : 'results'}`}</p><h2>{activeQuery ? `Results for “${activeQuery}”` : 'All books'}</h2></div><span className="results-heading__sort">Curated order <span aria-hidden="true">⌄</span></span></div>
+    <label className="readable-toggle"><input type="checkbox" checked={readableOnly} disabled={mode === 'demo'} onChange={(event) => setReadableOnly(event.target.checked)} /> Readable only{mode === 'demo' ? <span> · live catalogue only</span> : hiddenByFilter > 0 ? <span> · {hiddenByFilter} without files hidden</span> : <span> · every result opens</span>}</label>
     {showLoading
       ? <div className="empty-state" role="status"><h2>Searching the catalogue…</h2><p>Hold on while matching records arrive.</p></div>
       : showSearchError
         ? <div className="empty-state"><BookIcon /><h2>Search is unavailable.</h2><p>The catalogue did not answer. Your previous results are gone; try again.</p><button type="button" className="button button--dark" onClick={retrySearch}>Retry search</button></div>
         : showEmpty
-          ? <div className="empty-state"><BookIcon /><h2>No books here yet.</h2><p>Try a different phrase, or browse the full collection.</p><button type="button" className="button button--dark" onClick={() => { setQuery(''); setActiveQuery(''); navigate('/discover') }}>Clear search</button></div>
-          : <div className="book-grid">{filtered.map((book) => <BookCard key={book.id} book={book} onOpen={onOpen} variant="grid" />)}</div>}
+          ? hiddenByFilter > 0
+            ? <div className="empty-state"><BookIcon /><h2>Nothing readable here.</h2><p>{hiddenByFilter} {hiddenByFilter === 1 ? 'match has' : 'matches have'} metadata but no readable PDF or EPUB yet.</p><button type="button" className="button button--dark" onClick={() => setReadableOnly(false)}>Show everything</button></div>
+            : <div className="empty-state"><BookIcon /><h2>No books here yet.</h2><p>Try a different phrase, or browse the full collection.</p><button type="button" className="button button--dark" onClick={() => { setQuery(''); setActiveQuery(''); navigate('/discover') }}>Clear search</button></div>
+          : <div className="book-grid">{visible.map((book) => <BookCard key={book.id} book={book} onOpen={onOpen} variant="grid" />)}</div>}
   </main>
 }
 
@@ -217,10 +227,16 @@ export function WorkView({ book, mode, navigate, related, loading, error, saved,
       : ratingSync === 'saved' ? 'Synced'
         : ratingSync === 'error' ? 'Couldn’t sync'
           : 'Sign in to sync'
+  const readableDocuments = book?.documents ?? []
+  const hasPdf = readableDocuments.some((document) => document.mediaType.toLocaleLowerCase().includes('pdf'))
+  const hasEpub = readableDocuments.some((document) => document.mediaType.toLocaleLowerCase().includes('epub'))
+  const availabilityNote = !book || loading ? undefined : readableDocuments.length === 0
+    ? 'No readable PDF or EPUB is attached to this work yet.'
+    : `Readable now: ${[hasPdf ? 'PDF' : undefined, hasEpub ? 'EPUB' : undefined].filter(Boolean).join(' · ')} (${readableDocuments.length} ${readableDocuments.length === 1 ? 'file' : 'files'})`
   if (loading) return <main className="wrap loading-page"><div className="loading-block" /><div className="loading-block loading-block--short" /></main>
   if (!book || error) return <main className="wrap empty-state page-empty"><BookIcon /><h1>Work unavailable</h1><p>{error ?? 'This work could not be found in the catalogue.'}</p><button className="button button--dark" onClick={() => navigate('/discover')}>Back to discover</button></main>
   return <main>
-    <section className="detail wrap"><div className="detail__cover"><CoverImage title={book.title} sourceUrl={book.coverUrl} accent={book.accent} size="large" attribution={book.coverAttribution} /><p className="provenance"><span className={`provenance__dot provenance__dot--${book.sourceKind}`} />{book.sourceKind === 'demo' ? 'Demo record · local preview' : `Source: ${book.sourceLabel}`}</p></div><div className="detail__copy"><p className="eyebrow">{book.category} <span aria-hidden="true">·</span> {book.year}</p><h1>{book.title}</h1>{book.subtitle && <p className="detail__subtitle">{book.subtitle}</p>}<p className="detail__author">by <strong>{book.author}</strong></p><p className="detail__description">{book.description}</p><div className="detail__actions"><button className="button button--light" onClick={() => navigate(`/read/${book.id}`)}>Read now <ArrowIcon /></button><button className="button button--outline" aria-pressed={Boolean(saved)} onClick={() => onToggleShelf?.(book)}>{saved ? 'Remove from shelf' : '+ Add to shelf'}</button></div><div className="detail__meta"><span><strong>{book.pages || '—'}</strong> pages</span><span><strong>{book.readingTime}</strong></span><span><strong>{book.language}</strong></span></div><RatingControl value={rating} onChange={updateRating} onClear={rating ? clearRating : undefined} disabled={ratingSync === 'saving'} note={ratingNote} />{ratingError && <p className="rating-control__error" role="alert">{ratingError}</p>}<RatingsPanel ratings={ratings} loading={ratingsLoading} error={ratingsError} onRetry={() => setRatingsAttempt((attempt) => attempt + 1)} /></div></section>
+    <section className="detail wrap"><div className="detail__cover"><CoverImage title={book.title} sourceUrl={book.coverUrl} accent={book.accent} size="large" attribution={book.coverAttribution} /><p className="provenance"><span className={`provenance__dot provenance__dot--${book.sourceKind}`} />{book.sourceKind === 'demo' ? 'Demo record · local preview' : `Source: ${book.sourceLabel}`}</p></div><div className="detail__copy"><p className="eyebrow">{book.category} <span aria-hidden="true">·</span> {book.year}</p><h1>{book.title}</h1>{book.subtitle && <p className="detail__subtitle">{book.subtitle}</p>}<p className="detail__author">by <strong>{book.author}</strong></p><p className="detail__description">{book.description}</p><div className="detail__actions"><button className="button button--light" onClick={() => navigate(`/read/${book.id}`)} disabled={readableDocuments.length === 0} title={readableDocuments.length === 0 ? 'No readable document is available yet' : undefined}>Read now <ArrowIcon /></button><button className="button button--outline" aria-pressed={Boolean(saved)} onClick={() => onToggleShelf?.(book)}>{saved ? 'Remove from shelf' : '+ Add to shelf'}</button></div>{availabilityNote && <p className="detail__availability" role="status">{availabilityNote}</p>}<div className="detail__meta"><span><strong>{book.pages || '—'}</strong> pages</span><span><strong>{book.readingTime}</strong></span><span><strong>{book.language}</strong></span></div><RatingControl value={rating} onChange={updateRating} onClear={rating ? clearRating : undefined} disabled={ratingSync === 'saving'} note={ratingNote} />{ratingError && <p className="rating-control__error" role="alert">{ratingError}</p>}<RatingsPanel ratings={ratings} loading={ratingsLoading} error={ratingsError} onRetry={() => setRatingsAttempt((attempt) => attempt + 1)} /></div></section>
     <section className="wrap detail-notes"><div><p className="eyebrow">About this edition</p><p>Folio keeps catalogue provenance visible as you read. Metadata may come from multiple sources; the selected cover and edition are shown above.</p></div><div><p className="eyebrow">Topics</p><div className="tag-list">{book.tags.map((tag) => <span key={tag}>{tag}</span>)}</div></div></section>
     <div className="wrap page-section"><Shelf title="Keep exploring" kicker="After this one" books={related.filter((item) => item.id !== book.id).slice(0, 4)} onOpen={(item) => navigate(`/works/${item.id}`)} /></div>
     <p className="detail-mode-note">{mode === 'demo' ? 'You are viewing an explicit demo record. It is not a live catalogue item.' : 'Live catalogue record'}</p>
@@ -327,5 +343,9 @@ export function NotFoundView({ path, navigate }: { path: string; navigate: (href
   return <main className="wrap empty-state page-empty"><BookIcon /><h1>That page isn’t on the shelf</h1><p>{path ? `“${path}” doesn’t match anything in Folio. It may have moved or the link may be wrong.` : 'This page doesn’t match anything in Folio.'}</p><div className="detail__actions"><button type="button" className="button button--dark" onClick={() => navigate('/')}>Back home</button><button type="button" className="button button--outline" onClick={() => navigate('/discover')}>Discover books</button></div></main>
 }
 
-function documentLabel(document: BookDocument) { return `${fileExtension(document.mediaType).toUpperCase()} · protected document ${document.id}` }
+function documentLabel(document: BookDocument) {
+  const format = fileExtension(document.mediaType).toUpperCase()
+  const edition = document.editionTitle ? ` · ${document.editionTitle}` : ''
+  return `${format}${edition} · document ${document.id}`
+}
 function fileExtension(mediaType: string) { return mediaType.toLocaleLowerCase().includes('epub') ? 'EPUB' : mediaType.toLocaleLowerCase().includes('pdf') ? 'PDF' : 'file' }
