@@ -31,6 +31,27 @@ The normalized ingestion flow is:
 5. Register cover candidates, fetch bounded copies into content-addressed
    storage, and record attribution, rights, source, and selection history.
 
+## Verified collection snapshot
+
+The latest completed local scan and PostgreSQL transfer recorded:
+
+- 6,031 logical local document identities, deduplicated by SHA-256;
+- 6,247 physical document locations;
+- 6,688 inventory entries, including unsupported and unreadable files;
+- 211,837 valid Rokomari source records materialized into 194,060 works and
+  205,969 editions;
+- 3,800,099 source-backed metadata assertions and 206,219 cover URL
+  candidates;
+- 14,696 pending local-document-to-edition candidates across 2,041 documents;
+  3,990 documents remain explicitly unmatched and no candidate has been
+  automatically accepted.
+
+SQLite and PostgreSQL counts match across all normalized tables. Google Books
+and Open Library adapters are available for staged responses or authorized
+dumps; their unauthenticated public endpoints were rate-limited or returned no
+usable results during the initial enrichment pass, so they have not been
+treated as silently merged metadata.
+
 The database currently uses SQLite for the compatibility and unit-test path.
 The normalized API is read-only and is available under `/v2`:
 
