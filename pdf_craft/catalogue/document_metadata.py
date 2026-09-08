@@ -12,14 +12,19 @@ a watermark for ``/Title``; two had clean romanized ``/Info`` but covers OCR
 could not read; two had neither and only the filename or cover left.  A strict
 cascade would have taken the first answer and missed the better one.
 
-Precedence within a field reflects measured reliability:
+Precedence differs by container, because the two embedded formats are not
+equally trustworthy:
 
-1. **Filename**, when a rigid per-source template matched.  84% of PDFs yield a
-   title this way and the templates are unambiguous.
-2. **Embedded ``/Info``**, but only from a producer known to write real
-   bibliographic data -- see :mod:`pdf_craft.catalogue.pdf_metadata`.
-3. **Cover OCR**, which is the only signal for the 2,441 documents whose
-   filenames are pure scraper placeholders.
+* **EPUB** puts the OPF first.  ``dc:title`` and ``dc:creator`` are real
+  bibliographic metadata written by whoever produced the book, and they are
+  right where the filename is a romanized slug: the OPF gives ``এলাটিং বেলাটিং``
+  where the filename only offers ``Elating-belating-Shamsur-Rahoman``.
+* **PDF** puts the filename first.  ``/Info`` is written by the scanning tool or
+  the download site far more often than by a publisher, so it ranks below a
+  matched scraper template and is gated on a trusted producer besides.
+
+Cover OCR ranks last in both, and is the only signal at all for the 2,441
+documents whose filenames are pure scraper placeholders.
 
 Anything not confidently resolved is left absent on purpose.  ``_document_fields``
 falls back to path inference when ``title`` is missing, and for this corpus that
@@ -93,8 +98,11 @@ def build_document_metadata(
         provenance["status"] = "not_a_book"
         return {"_extraction": provenance}
 
-    titles: list[str] = list(parsed.titles)
-    authors: list[str] = list(parsed.authors)
+    is_epub = path.suffix.lower() == ".epub" or (media_type or "").lower() in _EPUB_TYPES
+    filename_titles = list(parsed.titles)
+    filename_authors = list(parsed.authors)
+    embedded_titles: list[str] = []
+    embedded_authors: list[str] = []
     isbns: list[str] = []
     if parsed.titles or parsed.authors:
         provenance["signals"].append("filename")
@@ -105,12 +113,20 @@ def build_document_metadata(
             provenance["embedded_error"] = error
         if embedded:
             provenance["signals"].append("embedded")
-        # The extractor has already rejected untrusted producers, so anything
-        # surviving here is worth keeping -- but it ranks below the filename,
-        # which is right far more often on this corpus.
-        titles.extend(str(value) for value in _as_list(embedded.get("title")))
-        authors.extend(str(value) for value in _as_list(embedded.get("authors")))
-        isbns.extend(str(value) for value in _as_list(embedded.get("isbns")))
+        embedded_titles = [str(value) for value in _as_list(embedded.get("title"))]
+        embedded_authors = [str(value) for value in _as_list(embedded.get("authors"))]
+        isbns = [str(value) for value in _as_list(embedded.get("isbns"))]
+
+    # See the module docstring: the OPF outranks an EPUB's filename, while a
+    # PDF's /Info does not outrank a matched scraper template.
+    if is_epub:
+        titles = embedded_titles + filename_titles
+        authors = embedded_authors + filename_authors
+        provenance["precedence"] = "embedded_first"
+    else:
+        titles = filename_titles + embedded_titles
+        authors = filename_authors + embedded_authors
+        provenance["precedence"] = "filename_first"
 
     if cover_reading is not None:
         cover_titles = tuple(getattr(cover_reading, "title_candidates", ()))

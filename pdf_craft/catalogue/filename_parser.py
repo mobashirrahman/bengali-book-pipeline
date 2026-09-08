@@ -31,6 +31,56 @@ class ParsedFilename:
     year: str | None = None  # e.g. "1989" from [১৯৮৯]
     is_not_a_book: bool = False  # link lists, fragments
     confidence: float = 0.0  # 0.0-1.0
+    directory_author: str | None = None  # parent dir, UNVERIFIED -- see below
+
+
+# Directory names that are demonstrably not people.  Measured counts from the
+# live collection: `epub-staging` labelled 1,626 documents, `মাসুদ রানা সিরিজ`
+# 309, `ওয়েস্টার্ন বই - সেবা প্রকাশনী` 120, `বিবিধ` 103.  Catalogue membership
+# cannot be the test on its own, because genuinely famous authors are missing
+# from the catalogue -- `মুহম্মদ জাফর ইকবাল` labels 234 documents and is a real
+# person -- so a structural test runs first and catalogue lookup only promotes
+# confidence afterwards.
+_NON_PERSON_DIRECTORIES = frozenset({
+    "epub-staging", "others", "বিবিধ", "উপন্যাস", "সমকালীন উপন্যাস", "গল্প",
+    "কবিতা", "প্রবন্ধ", "ইতিহাস", "বাংলাদেশের ইতিহাস", "হিন্দু ধর্ম", "ইসলাম",
+    "মহাভারত", "রামায়ণ", "ম্যাগাজিন", "পত্রিকা", "অনুবাদ", "সংকলন",
+    "books", "data", "pdf", "misc", "unsorted", "new", "temp", "download",
+    # Format-named staging folders.  `ই-পাব` is Bengali for "e-pub" and was
+    # written as the author of every EPUB in it.
+    "ই-পাব", "ইপাব", "epub", "epubs", "e-pub", "ebook", "ebooks", "ই-বুক",
+})
+# Tokens that mark a collection, imprint or format rather than a person.
+_NON_PERSON_MARKERS = (
+    "সিরিজ", "প্রকাশনী", "রচনাবলী", "সমগ্র", "সংকলন", "কমিকস", "পত্রিকা",
+    "series", "comics", "publications", "publishers", "collection", "magazine",
+    "staging", "archive", "vol.", "volume",
+)
+
+
+def is_probably_person_name(value: str) -> bool:
+    """Reject directory names that name a series, genre, publisher or folder.
+
+    Deliberately structural rather than catalogue-based.  Testing membership in
+    `catalogue_people` alone would discard real authors the catalogue happens to
+    lack, which is common here: the catalogue is a current-market retailer while
+    the collection is largely classic and out-of-print.
+    """
+    cleaned = " ".join(value.split())
+    if not cleaned or len(cleaned) < 2:
+        return False
+    lowered = cleaned.casefold()
+    if lowered in _NON_PERSON_DIRECTORIES:
+        return False
+    if any(marker in lowered for marker in _NON_PERSON_MARKERS):
+        return False
+    # A directory holding a separator is a description, not a name --
+    # `ওয়েস্টার্ন বই - সেবা প্রকাশনী` is a genre plus its publisher.
+    if " - " in cleaned or "_" in cleaned:
+        return False
+    # Folder-ish names carry no spaces and no Bengali; a real name has one or
+    # the other.
+    return " " in cleaned or any("\u0980" <= ch <= "\u09ff" for ch in cleaned)
 
 
 # ---------------------------------------------------------------------------
@@ -528,14 +578,17 @@ def parse_filename(source_path: str) -> ParsedFilename:
         authors = [*marker_authors, *authors]
         confidence = 1.0
 
+    directory_author: str | None = None
     if source == "authordir":
         # Containing directory LAST: often a series/genre, not a person
         # (measured examples: `মাসুদ রানা সিরিজ`, `বিবিধ`, `উপন্যাস`,
         # `epub-staging`); the caller validates it against the catalogue.
         parent = os.path.basename(os.path.dirname(source_path.replace("\\", "/")))
         parent = _clean_part(parent)
-        if parent and parent not in authors:
-            authors = [*authors, parent]
+        if parent and is_probably_person_name(parent):
+            directory_author = parent
+            if parent not in authors:
+                authors = [*authors, parent]
 
     final_titles = _dedupe(list(titles))
     final_authors = _dedupe(list(authors))
@@ -551,4 +604,5 @@ def parse_filename(source_path: str) -> ParsedFilename:
         year=year,
         is_not_a_book=False,
         confidence=confidence,
+        directory_author=directory_author,
     )

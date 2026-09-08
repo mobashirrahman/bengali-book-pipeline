@@ -94,3 +94,47 @@ def test_extraction_block_marks_the_row_as_attempted():
     # A row still holding '{}' has never been tried; one carrying _extraction
     # has, which is what makes the backfill resumable.
     assert "_extraction" in _build(_PLACEHOLDER)
+
+
+def test_epub_opf_outranks_the_filename_slug():
+    """EPUB precedence is inverted relative to PDF, and deliberately so.
+
+    An EPUB's OPF carries real dc:title metadata, while its filename is usually
+    a romanized slug: the OPF gives `এলাটিং বেলাটিং` where the filename offers
+    only `Elating-belating-Shamsur-Rahoman`. A PDF's /Info is the opposite --
+    written by the scanning tool far more often than by a publisher -- so it
+    ranks below a matched scraper template.
+    """
+    from types import SimpleNamespace
+    import pdf_craft.catalogue.document_metadata as module
+
+    def fake_epub(path):
+        return {"title": "এলাটিং বেলাটিং", "authors": ["শামসুর রাহমান"]}
+
+    original = module.extract_epub_metadata
+    module.extract_epub_metadata = fake_epub
+    try:
+        result = build_document_metadata(
+            "data/ই-পাব/Elating-belating-Shamsur-Rahoman.epub",
+            "application/epub+zip",
+            read_embedded=True,
+        )
+    finally:
+        module.extract_epub_metadata = original
+    assert result["title"] == "এলাটিং বেলাটিং"
+    assert result["authors"][0] == "শামসুর রাহমান"
+    assert result["_extraction"]["precedence"] == "embedded_first"
+
+
+def test_pdf_keeps_filename_precedence():
+    result = _build(_BENGALIEBOOK)
+    assert result["_extraction"]["precedence"] == "filename_first"
+
+
+def test_format_named_directory_is_not_an_author():
+    # `ই-পাব` is Bengali for "e-pub"; it was written as the author of every
+    # EPUB stored under it.
+    from pdf_craft.catalogue.filename_parser import is_probably_person_name
+
+    assert not is_probably_person_name("ই-পাব")
+    assert not is_probably_person_name("epub-staging")

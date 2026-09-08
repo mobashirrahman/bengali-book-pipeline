@@ -151,12 +151,22 @@ def test_banglabookshelf_placeholder_is_empty():
     assert result.confidence == 0.0
 
 
-def test_authordir_title_first_and_directory_last():
-    result = parse_filename("data/গোয়েন্দা সিরিজ/মুখোশ - নীহাররঞ্জন গুপ্ত.pdf")
+def test_authordir_title_first_and_person_directory_last():
+    # A directory that names a person is appended as a lower-ranked candidate.
+    result = parse_filename("data/নীহাররঞ্জন গুপ্ত/মুখোশ - নীহাররঞ্জন গুপ্ত.pdf")
     assert result.source == "authordir"
     assert result.titles == ("মুখোশ",)
-    assert result.authors == ("নীহাররঞ্জন গুপ্ত", "গোয়েন্দা সিরিজ")
+    assert result.authors == ("নীহাররঞ্জন গুপ্ত",)
     assert result.confidence == 0.5
+
+
+def test_authordir_series_directory_is_not_an_author():
+    # `গোয়েন্দা সিরিজ` is "detective series", not a person.  Emitting it wrote
+    # series and genre names into the author field of thousands of documents.
+    result = parse_filename("data/গোয়েন্দা সিরিজ/মুখোশ - নীহাররঞ্জন গুপ্ত.pdf")
+    assert result.titles == ("মুখোশ",)
+    assert result.authors == ("নীহাররঞ্জন গুপ্ত",)
+    assert result.directory_author is None
 
 
 def test_authordir_leading_bracket_volume():
@@ -305,3 +315,55 @@ def test_source_key_extraction():
     )
     assert parse_filename("data/somedir/x.pdf").source == "authordir"
     assert parse_filename("x.pdf").source == "authordir"
+
+
+# ---------------------------------------------------------------------------
+# Directory authors: structural non-person rejection
+# ---------------------------------------------------------------------------
+
+
+def test_non_person_directories_are_rejected():
+    """Series, genre, publisher and folder names must not become authors.
+
+    Measured pollution from the first live backfill: `epub-staging` was written
+    as the author of 1,626 documents, `মাসুদ রানা সিরিজ` (a series) of 309, and
+    `ওয়েস্টার্ন বই - সেবা প্রকাশনী` (a publisher) of 120.
+    """
+    from pdf_craft.catalogue.filename_parser import is_probably_person_name
+
+    for value in (
+        "epub-staging", "Others", "বিবিধ", "উপন্যাস", "মাসুদ রানা সিরিজ",
+        "ওয়েস্টার্ন বই - সেবা প্রকাশনী", "বাংলাদেশের ইতিহাস",
+        "Chacha Chowdhury Comics", "হিন্দু ধর্ম", "মহাভারত",
+    ):
+        assert not is_probably_person_name(value), value
+
+
+def test_real_authors_survive_even_when_absent_from_the_catalogue():
+    """Catalogue membership cannot be the test.
+
+    The catalogue is a current-market retailer while the collection is largely
+    classic and out-of-print, so genuinely famous authors are missing from it --
+    `মুহম্মদ জাফর ইকবাল` labels 234 documents and is a real person. Rejecting
+    everything the catalogue lacks would discard them.
+    """
+    from pdf_craft.catalogue.filename_parser import is_probably_person_name
+
+    for value in (
+        "মুহম্মদ জাফর ইকবাল", "তসলিমা নাসরিন", "রবীন্দ্রনাথ ঠাকুর",
+        "বুদ্ধদেব গুহ", "J.M. Wikeley", "Henry Morris",
+    ):
+        assert is_probably_person_name(value), value
+
+
+def test_directory_author_is_labelled_separately():
+    # The caller needs to know which author came from the directory so it can
+    # weight it lower than one parsed from a rigid template.
+    parsed = parse_filename("data/বুদ্ধদেব গুহ/মাধুকরী - বুদ্ধদেব গুহ.pdf")
+    assert parsed.directory_author == "বুদ্ধদেব গুহ"
+
+
+def test_rejected_directory_is_not_emitted_as_an_author():
+    parsed = parse_filename("data/epub-staging/Bishoron.pdf")
+    assert parsed.directory_author is None
+    assert "epub-staging" not in parsed.authors
