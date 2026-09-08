@@ -30,6 +30,13 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+# Version tag stored alongside every cached fingerprint row.  A cached row is
+# reused only when both the file's SHA-256 and this version match, so any
+# change to the render settings, hash, or page selection below must bump it --
+# otherwise a rerun would silently trust fingerprints it can no longer
+# interpret.
+FINGERPRINT_ALGO_VERSION = "dhash110-samples5-v1"
+
 # Comfortably above the observed same-book maximum (5) and far below the
 # observed different-book minimum (27).
 DUPLICATE_THRESHOLD = 10
@@ -224,20 +231,27 @@ def find_duplicate_documents(
         if interior:
             usable[document_id] = interior
 
-    ids = sorted(usable)
+    # Sorting by page count turns the page-count guard into a stopping rule
+    # instead of a filter: once the candidate is longer than the tolerance
+    # allows, so is every candidate after it.  The comparison set is the same as
+    # a full scan would produce, but 20,970 documents no longer cost 220M pair
+    # tests -- only the handful within each length band are ever compared.
+    ids = sorted(usable, key=lambda doc_id: (page_counts[doc_id], doc_id))
     pairs: list[DuplicatePair] = []
     for position, left in enumerate(ids):
         left_pages = page_counts[left]
+        allowance = max(1, int(left_pages * _PAGE_COUNT_TOLERANCE))
         for right in ids[position + 1:]:
-            delta = abs(left_pages - page_counts[right])
-            if delta > max(1, int(left_pages * _PAGE_COUNT_TOLERANCE)):
-                continue
+            delta = page_counts[right] - left_pages
+            if delta > allowance:
+                break
             agreeing = sum(
                 1 for a in usable[left]
                 if any(hamming(a, b) <= threshold for b in usable[right])
             )
             if agreeing >= min_pages_agreeing:
-                pairs.append(DuplicatePair(left, right, agreeing, delta))
+                low, high = (left, right) if left <= right else (right, left)
+                pairs.append(DuplicatePair(low, high, agreeing, delta))
     pairs.sort(key=lambda pair: (-pair.pages_agreeing, pair.page_count_delta))
     return pairs
 
@@ -258,3 +272,33 @@ def to_signed64(value: int) -> int:
 def from_signed64(value: int) -> int:
     """Inverse of :func:`to_signed64`."""
     return value + _UINT64 if value < 0 else value
+
+
+def page_count(pdf_path: str | Path) -> int:
+    """Page count via poppler, falling back to pypdf.
+
+    ``pdfinfo`` is tried first because pypdf raises ``DependencyError`` on
+    AES-encrypted files -- 416 of the first 4,250 documents fingerprinted, 10%
+    of the corpus -- while poppler reads and renders exactly those files without
+    complaint.  Since the rendering step already depends on poppler, taking the
+    page count from it as well removes a dependency rather than adding one.
+    """
+    try:
+        completed = subprocess.run(
+            ["pdfinfo", str(pdf_path)], capture_output=True, text=True, timeout=60, check=True,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        pass
+    else:
+        for line in completed.stdout.splitlines():
+            if line.startswith("Pages:"):
+                try:
+                    return int(line.split(":", 1)[1].strip())
+                except ValueError:
+                    break
+    try:
+        from pypdf import PdfReader
+
+        return len(PdfReader(str(pdf_path)).pages)
+    except Exception:
+        return 0

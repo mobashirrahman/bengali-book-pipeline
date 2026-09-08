@@ -4,8 +4,8 @@ import sqlite3
 from os.path import abspath, normcase, normpath
 from pathlib import Path
 
-SCHEMA_VERSION = 9
-_MAX_COMPATIBLE_SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
+_MAX_COMPATIBLE_SCHEMA_VERSION = 10
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS books (
@@ -483,6 +483,130 @@ _CATALOGUE_WORK_COLUMNS = {
 }
 
 
+_DEDUPE_DDL = """
+-- Duplicate detection records a judgement about the collection; it never
+-- changes the collection.  Every row is reversible: dropping these tables
+-- restores the pre-dedupe view of the corpus exactly.
+CREATE TABLE IF NOT EXISTS catalogue_duplicate_clusters (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    -- 'duplicate' is the only relation that implies removing a file; the
+    -- other two record that two kept files belong together.
+    relation TEXT NOT NULL
+        CHECK(relation IN ('duplicate', 'format_variant', 'same_work')),
+    status TEXT NOT NULL DEFAULT 'auto'
+        CHECK(status IN ('auto', 'review', 'confirmed', 'rejected')),
+    methods TEXT NOT NULL DEFAULT '',
+    size INTEGER NOT NULL,
+    keeper_document_id INTEGER REFERENCES catalogue_local_documents(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS catalogue_duplicate_members (
+    cluster_id INTEGER NOT NULL REFERENCES catalogue_duplicate_clusters(id) ON DELETE CASCADE,
+    document_id INTEGER NOT NULL REFERENCES catalogue_local_documents(id) ON DELETE CASCADE,
+    is_keeper INTEGER NOT NULL DEFAULT 0 CHECK(is_keeper IN (0, 1)),
+    score REAL NOT NULL DEFAULT 0,
+    -- The per-term breakdown behind ``score``, so a keeper choice can be
+    -- audited instead of taken on faith.
+    scorecard_json TEXT NOT NULL DEFAULT '{}',
+    PRIMARY KEY (cluster_id, document_id)
+);
+
+CREATE TABLE IF NOT EXISTS catalogue_duplicate_edges (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    left_document_id INTEGER NOT NULL REFERENCES catalogue_local_documents(id) ON DELETE CASCADE,
+    right_document_id INTEGER NOT NULL REFERENCES catalogue_local_documents(id) ON DELETE CASCADE,
+    method TEXT NOT NULL,
+    score REAL NOT NULL,
+    evidence_json TEXT NOT NULL DEFAULT '{}',
+    UNIQUE(left_document_id, right_document_id, method)
+);
+
+CREATE TABLE IF NOT EXISTS catalogue_text_signatures (
+    document_id INTEGER PRIMARY KEY REFERENCES catalogue_local_documents(id) ON DELETE CASCADE,
+    signature_json TEXT NOT NULL,
+    shingle_count INTEGER NOT NULL,
+    computed_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS catalogue_page_fingerprints (
+    document_id INTEGER NOT NULL REFERENCES catalogue_local_documents(id) ON DELETE CASCADE,
+    page_index INTEGER NOT NULL,
+    dhash INTEGER NOT NULL,
+    informative INTEGER NOT NULL DEFAULT 1,
+    page_count INTEGER,
+    PRIMARY KEY (document_id, page_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_catalogue_duplicate_members_document
+    ON catalogue_duplicate_members(document_id);
+CREATE INDEX IF NOT EXISTS idx_catalogue_duplicate_members_keeper
+    ON catalogue_duplicate_members(is_keeper, cluster_id);
+CREATE INDEX IF NOT EXISTS idx_catalogue_page_fingerprints_hash
+    ON catalogue_page_fingerprints(dhash);
+
+-- Reproducible, resumable whole-corpus runs.  The analysis below only ever
+-- reads the live collection; the live catalogue DB is never written unless an
+-- explicit command names it.  A run snapshots every observed path and its
+-- content identity, so a later ``apply`` can recheck each file before moving
+-- it and a ``rollback`` can restore exactly what was moved.
+CREATE TABLE IF NOT EXISTS dedupe_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    corpus_root TEXT NOT NULL,
+    tool_version TEXT NOT NULL,
+    params_json TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'running'
+        CHECK(status IN ('running', 'completed', 'failed')),
+    started_at TEXT NOT NULL DEFAULT (datetime('now')),
+    finished_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS dedupe_path_identities (
+    run_id INTEGER NOT NULL REFERENCES dedupe_runs(id) ON DELETE CASCADE,
+    source_path TEXT NOT NULL,
+    sha256 TEXT,
+    file_size INTEGER,
+    mtime_ns INTEGER,
+    media_type TEXT,
+    status TEXT NOT NULL
+        CHECK(status IN ('ok', 'unreadable', 'unsupported')),
+    error TEXT,
+    PRIMARY KEY (run_id, source_path)
+);
+
+CREATE TABLE IF NOT EXISTS dedupe_run_failures (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL REFERENCES dedupe_runs(id) ON DELETE CASCADE,
+    source_path TEXT NOT NULL,
+    stage TEXT NOT NULL,
+    error TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_dedupe_identities_run
+    ON dedupe_path_identities(run_id, status);
+CREATE INDEX IF NOT EXISTS idx_dedupe_failures_run
+    ON dedupe_run_failures(run_id);
+"""
+
+
+def _ensure_dedupe(conn: sqlite3.Connection) -> None:
+    """Install the additive duplicate-detection tables."""
+    conn.executescript(_DEDUPE_DDL)
+    # Fingerprint caches are keyed by content hash plus algorithm version, so
+    # the version must travel with the cached rows.  Older side databases
+    # created from the first DDL draft lack these columns; add them here
+    # rather than bumping the schema version for an additive fixup.
+    for table, column, definition in (
+        ("catalogue_page_fingerprints", "algo_version", "TEXT"),
+        ("catalogue_page_fingerprints", "stddev", "REAL"),
+        ("catalogue_text_signatures", "algo_version", "TEXT"),
+        ("catalogue_duplicate_edges", "run_id", "INTEGER"),
+        ("catalogue_duplicate_clusters", "run_id", "INTEGER"),
+    ):
+        if not _has_column(conn, table, column):
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
 def _read_existing_schema_version(conn: sqlite3.Connection) -> int | None:
     schema_table = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_version'"
@@ -669,6 +793,7 @@ def initialize_database(db_path: str | Path) -> sqlite3.Connection:
     _ensure_assets(conn)
     _ensure_local_file_catalogue(conn)
     _ensure_ratings(conn)
+    _ensure_dedupe(conn)
     conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
     conn.commit()
     return conn
