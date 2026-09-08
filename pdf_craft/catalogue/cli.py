@@ -14,6 +14,16 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 logger = logging.getLogger(__name__)
 
 
+def _non_negative_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be an integer") from exc
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be non-negative")
+    return parsed
+
+
 def cmd_init(args: argparse.Namespace) -> None:
     db = CatalogueDB(args.db)
     print(f"Initialized catalogue database at {args.db}")
@@ -137,6 +147,41 @@ def cmd_review(args: argparse.Namespace) -> None:
     review_match(db, args.match_id, reviewer=args.reviewer,
                  decision=args.decision, reason=args.reason)
     print(f"Match {args.match_id}: {args.decision}")
+    db.close()
+
+
+def cmd_resolve_local(args: argparse.Namespace) -> None:
+    from .resolution import generate_candidates
+
+    if args.limit is not None and args.limit < 0:
+        raise ValueError("limit must be non-negative")
+    db = CatalogueDB(args.db)
+    where = ""
+    parameters: list[object] = []
+    if args.only_unmatched:
+        where = "WHERE NOT EXISTS (SELECT 1 FROM catalogue_document_matches m WHERE m.document_id=d.id)"
+    limit = " LIMIT ?" if args.limit is not None else ""
+    if args.limit is not None:
+        parameters.append(args.limit)
+    rows = db.conn.execute(
+        "SELECT d.id FROM catalogue_local_documents d "
+        + where
+        + " ORDER BY d.id"
+        + limit,
+        tuple(parameters),
+    ).fetchall()
+    total_candidates = 0
+    for index, row in enumerate(rows, start=1):
+        total_candidates += len(generate_candidates(db, int(row[0])))
+        if index % 100 == 0:
+            logger.info("Resolved candidate queues for %d / %d local documents", index, len(rows))
+    pending = db.conn.execute(
+        "SELECT COUNT(*) FROM catalogue_document_matches WHERE status='candidate'"
+    ).fetchone()[0]
+    print(
+        f"Resolved {len(rows)} local documents; observed {total_candidates} candidate rows; "
+        f"pending candidates {pending}"
+    )
     db.close()
 
 
@@ -353,6 +398,20 @@ def main() -> None:
     p_review.add_argument("--reason", required=True)
     p_review.add_argument("decision", choices=("accepted", "rejected"))
     p_review.set_defaults(func=cmd_review)
+
+    p_resolve = sub.add_parser(
+        "resolve-local", help="Generate reviewable canonical edition candidates for local documents"
+    )
+    p_resolve.add_argument("--db", default="catalogue.db")
+    p_resolve.add_argument(
+        "--only-unmatched", action="store_true",
+        help="Skip documents that already have any candidate or decision",
+    )
+    p_resolve.add_argument(
+        "--limit", type=_non_negative_int,
+        help="Process at most this many documents",
+    )
+    p_resolve.set_defaults(func=cmd_resolve_local)
 
     p_google = sub.add_parser("enrich-google", help="Enrich books via Google Books API")
     p_google.add_argument("--db", default="catalogue.db")

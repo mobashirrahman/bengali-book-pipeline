@@ -81,6 +81,17 @@ sqlite3 pdf-craft-output/catalogue/catalogue.db \
   "SELECT COUNT(*) FROM catalogue_document_locations;"
 ```
 
+Generate reviewable edition candidates for all local document identities with:
+
+```bash
+python -m pdf_craft.catalogue.cli resolve-local \
+  --db pdf-craft-output/catalogue/catalogue.db --only-unmatched
+```
+
+This command uses the versioned resolver, preserves existing decisions, and
+leaves every generated match in `candidate` status. It processes logical
+SHA-256 documents, so duplicate physical paths share one matching decision.
+
 ## Local PostgreSQL environment
 
 System `sudo` is not available on the development host, so PostgreSQL is
