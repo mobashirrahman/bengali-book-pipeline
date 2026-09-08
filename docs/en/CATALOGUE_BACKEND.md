@@ -17,8 +17,12 @@ The catalogue has two layers:
 
 The normalized ingestion flow is:
 
-1. Index local PDFs, EPUBs, and supported artifacts by SHA-256 without
-   modifying anything under `data/`.
+1. Walk every regular file below the requested local root. PDFs, EPUBs, and
+   PCEX files are imported by SHA-256 without modifying anything under
+   `data/`; all other files and read failures are retained in the inventory.
+   The logical document table remains unique by SHA-256. Every imported
+   physical path is retained in `catalogue_document_locations`, so duplicate
+   bytes at different paths remain visible.
 2. Stage source records from explicit Rokomari JSONL, Google Books JSON, or
    Open Library dump files.
 3. Materialize source records into works, editions, people, identifiers, and
@@ -39,6 +43,43 @@ The normalized API is read-only and is available under `/v2`:
 
 Requests open and close their own SQLite connection. `/v1` remains available
 for existing clients.
+
+## Local inventory and import contract
+
+`catalogue_local_documents` is still the compatibility and matching identity:
+one row represents one SHA-256 and its `source_path` remains available to
+existing callers. `catalogue_document_locations` is the normalized physical
+path table and has one row per normalized path. Re-running an import updates
+the existing path row. If a path's bytes change, the path points to the new
+SHA-256 document while the old logical document row remains in the catalogue.
+No historical document, location, or inventory row is deleted by an import.
+
+`catalogue_local_inventory` is the durable scan manifest. It records every
+regular file observed by a scan with `imported`, `unsupported`, or
+`unreadable` status, discovery root and timestamps, file metadata, and any
+error. Metadata extraction is not part of this import; `metadata_json` keeps
+its existing behavior.
+
+Run a complete scan from the repository root with:
+
+```bash
+python -m pdf_craft.catalogue.cli init \
+  --db pdf-craft-output/catalogue/catalogue.db
+python -m pdf_craft.catalogue.cli ingest-local \
+  --db pdf-craft-output/catalogue/catalogue.db --data data \
+  --extensions pdf epub pcex
+```
+
+The command is repeat-safe. Its `Indexed` count is the number of supported
+files observed in that invocation and `skipped` counts supported files that
+could not be read. Inspect the full manifest with:
+
+```bash
+sqlite3 pdf-craft-output/catalogue/catalogue.db \
+  "SELECT status, COUNT(*) FROM catalogue_local_inventory GROUP BY status;"
+sqlite3 pdf-craft-output/catalogue/catalogue.db \
+  "SELECT COUNT(*) FROM catalogue_document_locations;"
+```
 
 ## Local PostgreSQL environment
 
@@ -116,7 +157,8 @@ remain part of the catalogue record.
 ## Transfer from SQLite
 
 SQLite remains authoritative for this phase. Transfer only the normalized
-`catalogue_` tables; legacy v1 tables are not copied. Rows are sent in bounded
+`catalogue_` tables, including local document locations and the local scan
+inventory; legacy v1 tables are not copied. Rows are sent in bounded
 batches in dependency order, preserving primary keys and provenance. Each
 batch commits its PostgreSQL checkpoint together with its upserts, so an
 interrupted transfer resumes safely. A repeated transfer is idempotent and
@@ -145,7 +187,9 @@ python -m pdf_craft.catalogue.cli transfer-postgres \
   --dsn postgresql://127.0.0.1:55432/pdf_craft_catalogue
 ```
 
-The transferred database currently contains 2,987 indexed local documents.
+The transferred database contains the logical document rows present in the
+authoritative SQLite catalogue at transfer time; use the transfer report and
+the inventory queries above for the current counts.
 
 ## Useful SQLite commands
 

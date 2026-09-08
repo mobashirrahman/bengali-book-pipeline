@@ -239,6 +239,7 @@ class NormalizedDocumentResponse(BaseModel):
     matches: list[dict]
     assets: list[dict]
     artifacts: list[dict]
+    locations: list[dict]
 
 
 class NormalizedSearchResponse(BaseModel):

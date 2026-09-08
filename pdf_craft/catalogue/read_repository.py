@@ -109,7 +109,16 @@ def get_document(conn: Any, document_id: int) -> dict[str, Any] | None:
         JOIN catalogue_editions e ON e.id=m.edition_id WHERE m.document_id=?
         AND m.status IN ('accepted','candidate') ORDER BY CASE m.status WHEN 'accepted' THEN 0 ELSE 1 END, m.score DESC, m.id""", (document_id,))
     artifacts = _many(conn, "SELECT id, kind, storage_uri, sha256, profile, created_at FROM catalogue_artifacts WHERE document_id=? ORDER BY id", (document_id,))
-    return {**document, "matches": matches, "assets": _assets(conn, document_id=document_id), "artifacts": artifacts}
+    locations = _many(conn, """SELECT id, source_path, file_size, media_type,
+        discovered_at, last_seen_at, updated_at
+        FROM catalogue_document_locations WHERE document_id=? ORDER BY source_path, id""", (document_id,))
+    return {
+        **document,
+        "matches": matches,
+        "assets": _assets(conn, document_id=document_id),
+        "artifacts": artifacts,
+        "locations": locations,
+    }
 
 
 def get_asset(conn: Any, asset_id: int) -> dict[str, Any] | None:

@@ -225,7 +225,11 @@ def cmd_ingest_local(args: argparse.Namespace) -> None:
     indexed, skipped = ingest_local_documents(
         db, args.data, include_extensions=extensions,
     )
-    print(f"Indexed {indexed} local documents; skipped {skipped}")
+    inventory = db.conn.execute(
+        "SELECT status, COUNT(*) FROM catalogue_local_inventory GROUP BY status"
+    ).fetchall()
+    counts = ", ".join(f"{row[0]}={row[1]}" for row in inventory)
+    print(f"Indexed {indexed} local documents; skipped {skipped}; inventory {counts}")
     db.close()
 
 

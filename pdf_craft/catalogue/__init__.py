@@ -17,6 +17,7 @@ from .foundation import (
     file_sha256,
     ingest_local_documents,
     iter_local_documents,
+    iter_local_files,
 )
 from .importers.open_library import (
     OpenLibraryResult,
@@ -47,8 +48,6 @@ from .models import (
     Subject,
     User,
 )
-from .resolution import accept_match, generate_candidates, reject_match, review_match
-from .schema import get_db_connection, initialize_database
 from .postgres import (
     PostgresCatalogueDB,
     PostgresUnavailableError,
@@ -56,6 +55,8 @@ from .postgres import (
     postgres_status,
     resolve_postgres_dsn,
 )
+from .resolution import accept_match, generate_candidates, reject_match, review_match
+from .schema import get_db_connection, initialize_database
 from .search import (
     get_book_stats,
     rebuild_fts_index,
@@ -73,14 +74,14 @@ __all__ = [
     "Bookmark",
     "CatalogueDB",
     "CatalogueFoundation",
-    "PostgresCatalogueDB",
-    "PostgresUnavailableError",
     "Favorite",
     "FileRecord",
     "ImportRun",
     "LocalDocument",
     "NormalizedSource",
     "OpenLibraryResult",
+    "PostgresCatalogueDB",
+    "PostgresUnavailableError",
     "ProcessingRecord",
     "ProcessingState",
     "ReadingList",
@@ -103,24 +104,25 @@ __all__ = [
     "initialize_postgres",
     "is_valid_isbn",
     "iter_local_documents",
+    "iter_local_files",
     "match_book",
     "materialize_source_records",
     "normalize_bengali",
     "normalize_isbn",
     "normalize_isbn10",
     "parse_source_record",
+    "postgres_status",
     "rank_cover_candidates",
     "rebuild_fts_index",
     "register_local_bytes",
     "register_local_file",
     "register_remote_cover",
-    "postgres_status",
     "reject_match",
+    "resolve_postgres_dsn",
     "review_match",
     "search_books",
     "search_books_with_authors",
     "search_open_library",
     "select_cover",
     "stage_open_library_dump",
-    "resolve_postgres_dsn",
 ]

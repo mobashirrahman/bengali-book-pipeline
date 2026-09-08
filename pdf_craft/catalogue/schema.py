@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import sqlite3
+from os.path import abspath, normcase, normpath
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
 _MAX_COMPATIBLE_SCHEMA_VERSION = 4
 
 _DDL = """
@@ -399,6 +400,43 @@ _ASSET_COLUMNS = {
     "metadata_json": "TEXT NOT NULL DEFAULT '{}'",
 }
 
+_LOCAL_FILE_DDL = """
+CREATE TABLE IF NOT EXISTS catalogue_document_locations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id INTEGER NOT NULL REFERENCES catalogue_local_documents(id) ON DELETE CASCADE,
+    source_path TEXT NOT NULL UNIQUE,
+    file_size INTEGER NOT NULL,
+    media_type TEXT NOT NULL,
+    discovered_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS catalogue_local_inventory (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_path TEXT NOT NULL UNIQUE,
+    discovery_root TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('imported', 'unsupported', 'unreadable')),
+    extension TEXT NOT NULL,
+    media_type TEXT,
+    file_size INTEGER,
+    mtime_ns INTEGER,
+    sha256 TEXT,
+    document_id INTEGER REFERENCES catalogue_local_documents(id) ON DELETE SET NULL,
+    error TEXT,
+    discovered_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_catalogue_document_locations_document
+    ON catalogue_document_locations(document_id, source_path);
+CREATE INDEX IF NOT EXISTS idx_catalogue_inventory_status
+    ON catalogue_local_inventory(status, source_path);
+CREATE INDEX IF NOT EXISTS idx_catalogue_inventory_document
+    ON catalogue_local_inventory(document_id);
+"""
+
 _CATALOGUE_WORK_COLUMNS = {
     "subtitle": "TEXT",
     "sort_title": "TEXT",
@@ -480,6 +518,71 @@ def _ensure_assets(conn: sqlite3.Connection) -> None:
     )
 
 
+def _ensure_local_file_catalogue(conn: sqlite3.Connection) -> None:
+    """Install local inventory tables and preserve existing document paths."""
+    conn.executescript(_LOCAL_FILE_DDL)
+    rows = conn.execute(
+        """SELECT id, source_path, file_size, media_type, discovered_at, updated_at
+           FROM catalogue_local_documents ORDER BY id DESC"""
+    ).fetchall()
+    seen_paths: set[str] = set()
+    for row in rows:
+        # The normalized tables use an absolute, normalized path key so that
+        # repeated CLI invocations with equivalent paths remain idempotent.
+        source_path = normcase(normpath(abspath(str(row[1]))))
+        if source_path in seen_paths:
+            # The logical document rows are retained as history; only the
+            # newest row owns a current normalized location and inventory row.
+            continue
+        seen_paths.add(source_path)
+        discovery_root = str(Path(source_path).parent)
+        location_update = conn.execute(
+            """UPDATE catalogue_document_locations
+               SET document_id=?, file_size=?, media_type=?,
+                   last_seen_at=COALESCE(?, datetime('now')),
+                   updated_at=COALESCE(?, datetime('now'))
+               WHERE source_path=?""",
+            (row[0], row[2], row[3], row[4], row[5], source_path),
+        )
+        if location_update.rowcount == 0:
+            conn.execute(
+                """INSERT INTO catalogue_document_locations
+                   (document_id, source_path, file_size, media_type, discovered_at,
+                    last_seen_at, updated_at)
+                   VALUES (?, ?, ?, ?, COALESCE(?, datetime('now')),
+                           COALESCE(?, datetime('now')), COALESCE(?, datetime('now')))""",
+                (row[0], source_path, row[2], row[3], row[4], row[4], row[5]),
+            )
+        inventory_update = conn.execute(
+            """UPDATE catalogue_local_inventory
+               SET discovery_root=?, status='imported', extension=?, media_type=?,
+                   file_size=?, sha256=(SELECT sha256 FROM catalogue_local_documents WHERE id=?),
+                   document_id=?, error=NULL,
+                   last_seen_at=COALESCE(?, datetime('now')),
+                   updated_at=COALESCE(?, datetime('now'))
+               WHERE source_path=?""",
+            (
+                discovery_root, Path(source_path).suffix.lower(), row[3], row[2],
+                row[0], row[0], row[4], row[5], source_path,
+            ),
+        )
+        if inventory_update.rowcount == 0:
+            conn.execute(
+                """INSERT INTO catalogue_local_inventory
+                   (source_path, discovery_root, status, extension, media_type,
+                    file_size, sha256, document_id, discovered_at, last_seen_at,
+                    updated_at)
+                   VALUES (?, ?, 'imported', ?, ?, ?,
+                           (SELECT sha256 FROM catalogue_local_documents WHERE id=?),
+                           ?, COALESCE(?, datetime('now')), COALESCE(?, datetime('now')),
+                           COALESCE(?, datetime('now')))""",
+                (
+                    source_path, discovery_root, Path(source_path).suffix.lower(),
+                    row[3], row[2], row[0], row[0], row[4], row[4], row[5],
+                ),
+            )
+
+
 def initialize_database(db_path: str | Path) -> sqlite3.Connection:
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -523,6 +626,8 @@ def initialize_database(db_path: str | Path) -> sqlite3.Connection:
         conn.executescript(_V2_DDL)
     _ensure_v3(conn)
     _ensure_assets(conn)
+    _ensure_local_file_catalogue(conn)
+    conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
     conn.commit()
     return conn
 

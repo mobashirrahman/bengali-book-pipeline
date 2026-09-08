@@ -10,10 +10,11 @@ from __future__ import annotations
 import hashlib
 import json
 import mimetypes
+import os
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterator
 
 from .database import CatalogueDB
 
@@ -28,6 +29,11 @@ def _json(value: object) -> str:
 
 def _sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
+
+
+def _normalized_path(path: str | Path) -> str:
+    """Return the stable path key used by the local-file tables."""
+    return os.path.normcase(os.path.normpath(os.path.abspath(os.fspath(path))))
 
 
 def file_sha256(path: Path, chunk_size: int = 1024 * 1024) -> str:
@@ -170,8 +176,65 @@ class CatalogueFoundation:
                 (digest, str(source), stat.st_size, media_type, metadata_json),
             )
             document_id = int(cursor.lastrowid)
+        location_path = _normalized_path(source)
+        self.db.conn.execute(
+            """INSERT INTO catalogue_document_locations
+               (document_id, source_path, file_size, media_type)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(source_path) DO UPDATE SET
+               document_id=excluded.document_id,
+               file_size=excluded.file_size,
+               media_type=excluded.media_type,
+               last_seen_at=datetime('now'),
+               updated_at=datetime('now')""",
+            (document_id, location_path, stat.st_size, media_type),
+        )
         self.db.conn.commit()
         return LocalDocument(document_id, digest, str(source), stat.st_size, media_type)
+
+    def record_local_inventory(
+        self,
+        path: str | Path,
+        *,
+        root: str | Path,
+        status: str,
+        document_id: int | None = None,
+        sha256: str | None = None,
+        error: str | None = None,
+        stat_result: os.stat_result | None = None,
+    ) -> None:
+        """Record one observed filesystem entry without deleting history."""
+        if status not in {"imported", "unsupported", "unreadable"}:
+            raise ValueError("invalid local inventory status")
+        source_path = _normalized_path(path)
+        discovery_root = _normalized_path(root)
+        extension = Path(path).suffix.lower()
+        media_type = mimetypes.guess_type(Path(path).name)[0]
+        file_size = stat_result.st_size if stat_result is not None else None
+        mtime_ns = stat_result.st_mtime_ns if stat_result is not None else None
+        self.db.conn.execute(
+            """INSERT INTO catalogue_local_inventory
+               (source_path, discovery_root, status, extension, media_type,
+                file_size, mtime_ns, sha256, document_id, error)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(source_path) DO UPDATE SET
+               discovery_root=excluded.discovery_root,
+               status=excluded.status,
+               extension=excluded.extension,
+               media_type=excluded.media_type,
+               file_size=excluded.file_size,
+               mtime_ns=excluded.mtime_ns,
+               sha256=excluded.sha256,
+               document_id=excluded.document_id,
+               error=excluded.error,
+               last_seen_at=datetime('now'),
+               updated_at=datetime('now')""",
+            (
+                source_path, discovery_root, status, extension, media_type,
+                file_size, mtime_ns, sha256, document_id, error,
+            ),
+        )
+        self.db.conn.commit()
 
     def record_source_snapshot(
         self,
@@ -307,6 +370,17 @@ def iter_local_documents(root: str | Path) -> Iterator[Path]:
     )
 
 
+def iter_local_files(root: str | Path) -> Iterator[Path]:
+    """Yield every regular file below ``root`` in stable path order."""
+    base = Path(root)
+    if not base.is_dir():
+        raise NotADirectoryError(base)
+    yield from sorted(
+        (path for path in base.rglob("*") if path.is_file()),
+        key=lambda path: str(path),
+    )
+
+
 def ingest_local_documents(
     db: CatalogueDB,
     root: str | Path,
@@ -314,17 +388,42 @@ def ingest_local_documents(
     include_extensions: set[str] | None = None,
 ) -> tuple[int, int]:
     """Index local files by content hash; return ``(created_or_updated, skipped)``."""
-    foundation = CatalogueFoundation(db)
-    paths = iter_local_documents(root)
-    if include_extensions is not None:
-        normalized = {extension.lower() for extension in include_extensions}
-        paths = (path for path in paths if path.suffix.lower() in normalized)
+    base = Path(root)
+    paths = iter_local_files(base)
+    supported = {".pdf", ".epub", ".pcex"}
+    normalized = (
+        {extension.lower() for extension in include_extensions}
+        if include_extensions is not None else supported
+    )
     count = 0
     skipped = 0
+    foundation = CatalogueFoundation(db)
     for path in paths:
+        suffix = path.suffix.lower()
         try:
-            foundation.upsert_local_document(path)
+            stat_result = path.stat()
+        except OSError as exc:
+            foundation.record_local_inventory(
+                path, root=base, status="unreadable", error=str(exc),
+            )
+            skipped += 1
+            continue
+        if suffix not in supported or suffix not in normalized:
+            foundation.record_local_inventory(
+                path, root=base, status="unsupported", stat_result=stat_result,
+            )
+            continue
+        try:
+            document = foundation.upsert_local_document(path)
+            foundation.record_local_inventory(
+                path, root=base, status="imported", document_id=document.id,
+                sha256=document.sha256, stat_result=stat_result,
+            )
             count += 1
-        except (OSError, ValueError):
+        except (OSError, ValueError) as exc:
+            foundation.record_local_inventory(
+                path, root=base, status="unreadable", error=str(exc),
+                stat_result=stat_result,
+            )
             skipped += 1
     return count, skipped

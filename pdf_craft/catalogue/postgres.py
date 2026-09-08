@@ -22,7 +22,7 @@ except ImportError:  # pragma: no cover - exercised by environments without the 
     dict_row = None  # type: ignore[assignment]
 
 
-POSTGRES_SCHEMA_VERSION = 6
+POSTGRES_SCHEMA_VERSION = 8
 POSTGRES_STATEMENT_TIMEOUT_MS = 5_000
 POSTGRES_ADVISORY_LOCK_KEY = 7_861_041_223
 POSTGRES_CLIENT_ENCODING = "UTF8"
@@ -45,6 +45,134 @@ class MigrationStatus:
     name: str
     checksum: str
     applied_at: str
+
+
+_LOCAL_FILE_BACKFILL_SQL = """
+WITH current_documents AS (
+    SELECT id, sha256, source_path, file_size, media_type, discovered_at, updated_at,
+           ROW_NUMBER() OVER (PARTITION BY source_path ORDER BY id DESC) AS path_rank
+    FROM catalogue_local_documents
+)
+INSERT INTO catalogue_document_locations
+    (document_id, source_path, file_size, media_type, discovered_at, last_seen_at, updated_at)
+SELECT id, source_path, file_size, media_type,
+       COALESCE(discovered_at, CURRENT_TIMESTAMP::text),
+       COALESCE(discovered_at, CURRENT_TIMESTAMP::text),
+       COALESCE(updated_at, CURRENT_TIMESTAMP::text)
+FROM current_documents
+WHERE path_rank = 1
+ON CONFLICT (source_path) DO UPDATE SET
+    document_id = EXCLUDED.document_id,
+    file_size = EXCLUDED.file_size,
+    media_type = EXCLUDED.media_type,
+    last_seen_at = EXCLUDED.last_seen_at,
+    updated_at = EXCLUDED.updated_at;
+
+WITH current_documents AS (
+    SELECT id, sha256, source_path, file_size, media_type, discovered_at, updated_at,
+           ROW_NUMBER() OVER (PARTITION BY source_path ORDER BY id DESC) AS path_rank
+    FROM catalogue_local_documents
+)
+INSERT INTO catalogue_local_inventory
+    (source_path, discovery_root, status, extension, media_type, file_size,
+     sha256, document_id, discovered_at, last_seen_at, updated_at)
+SELECT source_path,
+       CASE
+           WHEN POSITION('/' IN source_path) = 0 THEN '.'
+           WHEN REGEXP_REPLACE(source_path, '/[^/]*$', '') = '' THEN '/'
+           ELSE REGEXP_REPLACE(source_path, '/[^/]*$', '')
+       END,
+       'imported',
+       COALESCE(NULLIF(LOWER(SUBSTRING(source_path FROM '(\\.[^./]+)$')), ''), ''),
+       media_type,
+       file_size,
+       sha256,
+       id,
+       COALESCE(discovered_at, CURRENT_TIMESTAMP::text),
+       COALESCE(discovered_at, CURRENT_TIMESTAMP::text),
+       COALESCE(updated_at, CURRENT_TIMESTAMP::text)
+FROM current_documents
+WHERE path_rank = 1
+ON CONFLICT (source_path) DO UPDATE SET
+    discovery_root = EXCLUDED.discovery_root,
+    status = EXCLUDED.status,
+    extension = EXCLUDED.extension,
+    media_type = EXCLUDED.media_type,
+    file_size = EXCLUDED.file_size,
+    sha256 = EXCLUDED.sha256,
+    document_id = EXCLUDED.document_id,
+    error = NULL,
+    last_seen_at = EXCLUDED.last_seen_at,
+    updated_at = EXCLUDED.updated_at;
+"""
+
+
+_LOCAL_FILE_RUNTIME_BACKFILL_SQL = """
+WITH current_documents AS (
+    SELECT id, sha256, source_path, file_size, media_type, discovered_at, updated_at,
+           ROW_NUMBER() OVER (PARTITION BY source_path ORDER BY id DESC) AS path_rank
+    FROM catalogue_local_documents
+)
+INSERT INTO catalogue_document_locations
+    (document_id, source_path, file_size, media_type, discovered_at, last_seen_at, updated_at)
+SELECT doc.id, doc.source_path, doc.file_size, doc.media_type,
+       COALESCE(doc.discovered_at, CURRENT_TIMESTAMP::text),
+       COALESCE(doc.discovered_at, CURRENT_TIMESTAMP::text),
+       COALESCE(doc.updated_at, CURRENT_TIMESTAMP::text)
+FROM current_documents AS doc
+WHERE doc.path_rank = 1
+  AND NOT EXISTS (
+      SELECT 1 FROM catalogue_document_locations existing
+      WHERE existing.document_id = doc.id
+  )
+ON CONFLICT (source_path) DO UPDATE SET
+    document_id = EXCLUDED.document_id,
+    file_size = EXCLUDED.file_size,
+    media_type = EXCLUDED.media_type,
+    last_seen_at = EXCLUDED.last_seen_at,
+    updated_at = EXCLUDED.updated_at;
+
+WITH current_documents AS (
+    SELECT id, sha256, source_path, file_size, media_type, discovered_at, updated_at,
+           ROW_NUMBER() OVER (PARTITION BY source_path ORDER BY id DESC) AS path_rank
+    FROM catalogue_local_documents
+)
+INSERT INTO catalogue_local_inventory
+    (source_path, discovery_root, status, extension, media_type, file_size,
+     sha256, document_id, discovered_at, last_seen_at, updated_at)
+SELECT doc.source_path,
+       CASE
+           WHEN POSITION('/' IN doc.source_path) = 0 THEN '.'
+           WHEN REGEXP_REPLACE(doc.source_path, '/[^/]*$', '') = '' THEN '/'
+           ELSE REGEXP_REPLACE(doc.source_path, '/[^/]*$', '')
+       END,
+       'imported',
+       COALESCE(NULLIF(LOWER(SUBSTRING(doc.source_path FROM '(\\.[^./]+)$')), ''), ''),
+       doc.media_type,
+       doc.file_size,
+       doc.sha256,
+       doc.id,
+       COALESCE(doc.discovered_at, CURRENT_TIMESTAMP::text),
+       COALESCE(doc.discovered_at, CURRENT_TIMESTAMP::text),
+       COALESCE(doc.updated_at, CURRENT_TIMESTAMP::text)
+FROM current_documents AS doc
+WHERE doc.path_rank = 1
+  AND NOT EXISTS (
+      SELECT 1 FROM catalogue_local_inventory existing
+      WHERE existing.document_id = doc.id
+  )
+ON CONFLICT (source_path) DO UPDATE SET
+    discovery_root = EXCLUDED.discovery_root,
+    status = EXCLUDED.status,
+    extension = EXCLUDED.extension,
+    media_type = EXCLUDED.media_type,
+    file_size = EXCLUDED.file_size,
+    sha256 = EXCLUDED.sha256,
+    document_id = EXCLUDED.document_id,
+    error = NULL,
+    last_seen_at = EXCLUDED.last_seen_at,
+    updated_at = EXCLUDED.updated_at;
+"""
 
 
 _MIGRATIONS = (
@@ -312,6 +440,49 @@ _MIGRATIONS = (
             ON catalogue_edition_people(person_id, role, edition_id);
         """,
     ),
+    Migration(
+        7,
+        "local_file_inventory_and_locations",
+        """
+        CREATE TABLE catalogue_document_locations (
+            id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+            document_id BIGINT NOT NULL REFERENCES catalogue_local_documents(id) ON DELETE CASCADE,
+            source_path TEXT NOT NULL UNIQUE,
+            file_size BIGINT NOT NULL,
+            media_type TEXT NOT NULL,
+            discovered_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text),
+            last_seen_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text),
+            updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
+        );
+        CREATE TABLE catalogue_local_inventory (
+            id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+            source_path TEXT NOT NULL UNIQUE,
+            discovery_root TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('imported', 'unsupported', 'unreadable')),
+            extension TEXT NOT NULL,
+            media_type TEXT,
+            file_size BIGINT,
+            mtime_ns BIGINT,
+            sha256 TEXT,
+            document_id BIGINT REFERENCES catalogue_local_documents(id) ON DELETE SET NULL,
+            error TEXT,
+            discovered_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text),
+            last_seen_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text),
+            updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text)
+        );
+        CREATE INDEX idx_catalogue_document_locations_document
+            ON catalogue_document_locations(document_id, source_path);
+        CREATE INDEX idx_catalogue_local_inventory_status
+            ON catalogue_local_inventory(status, source_path);
+        CREATE INDEX idx_catalogue_local_inventory_document
+            ON catalogue_local_inventory(document_id);
+        """,
+    ),
+    Migration(
+        8,
+        "backfill_local_file_inventory",
+        _LOCAL_FILE_BACKFILL_SQL,
+    ),
 )
 
 
@@ -433,6 +604,12 @@ def _migration_rows(conn: Any) -> list[MigrationStatus]:
     return [MigrationStatus(**_normalize_postgres_row(row)) for row in rows]
 
 
+def _backfill_local_file_catalogue(conn: Any) -> None:
+    """Keep legacy local document rows visible in the normalized tables."""
+    conn.execute(_LOCAL_FILE_RUNTIME_BACKFILL_SQL)
+    conn.commit()
+
+
 def _migrate(conn: Any) -> list[MigrationStatus]:
     _ensure_ledger(conn)
     applied = {row.version: row for row in _migration_rows(conn)}
@@ -469,7 +646,8 @@ def initialize_postgres(
     try:
         db.conn.execute("SELECT pg_advisory_lock(%s)", (POSTGRES_ADVISORY_LOCK_KEY,))
         locked = True
-        return _migrate(db.conn)
+        migrations = _migrate(db.conn)
+        return migrations
     finally:
         if locked:
             try:

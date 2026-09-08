@@ -49,6 +49,9 @@ def test_v2_normalized_reads_are_paginated_and_read_only(tmp_path: Path) -> None
     edition_response = client.get(f"/v2/editions/{edition}").json()
     assert edition_response["assets"][0]["is_selected"] == 1
     assert client.get(f"/v2/documents/{document}").json()["matches"][0]["status"] == "accepted"
+    locations = client.get(f"/v2/documents/{document}").json()["locations"]
+    assert len(locations) == 1
+    assert locations[0]["source_path"].endswith("/alpha.pdf")
     assert client.get(f"/v2/assets/{asset}").json()["storage_uri"] == "cover.jpg"
 
     first = client.get("/v2/search", params={"q": "Alpha", "limit": 1})

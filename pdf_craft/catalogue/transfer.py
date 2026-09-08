@@ -33,6 +33,8 @@ TRANSFER_TABLES = (
     TransferTable("catalogue_editions", ("id", "work_id", "title", "subtitle", "publisher", "publication_date", "edition_statement", "language", "description", "page_count", "created_at", "updated_at"), ("id",)),
     TransferTable("catalogue_source_snapshots", ("id", "source", "snapshot_key", "fetched_at", "payload_sha256", "payload_json", "import_run_id", "request_json", "parser_version"), ("id",)),
     TransferTable("catalogue_local_documents", ("id", "sha256", "source_path", "file_size", "media_type", "metadata_json", "discovered_at", "updated_at"), ("id",)),
+    TransferTable("catalogue_document_locations", ("id", "document_id", "source_path", "file_size", "media_type", "discovered_at", "last_seen_at", "updated_at"), ("id",)),
+    TransferTable("catalogue_local_inventory", ("id", "source_path", "discovery_root", "status", "extension", "media_type", "file_size", "mtime_ns", "sha256", "document_id", "error", "discovered_at", "last_seen_at", "updated_at"), ("id",)),
     TransferTable("catalogue_source_records", ("id", "snapshot_id", "source", "external_id", "record_type", "title", "raw_json"), ("id",)),
     TransferTable("catalogue_edition_people", ("edition_id", "person_id", "role", "position"), ("edition_id", "person_id", "role")),
     TransferTable("catalogue_identifiers", ("id", "entity_type", "entity_id", "namespace", "value", "normalized_value"), ("id",)),
@@ -47,6 +49,10 @@ TRANSFER_TABLES = (
 )
 
 _SEQUENCE_TABLES = tuple(table.name for table in TRANSFER_TABLES if table.primary_key == ("id",))
+_LOCAL_LOCATION_TABLES = frozenset({
+    "catalogue_document_locations",
+    "catalogue_local_inventory",
+})
 
 
 def _fingerprint(path: Path) -> str:
@@ -133,6 +139,40 @@ def _reset_sequences(db: PostgresCatalogueDB) -> None:
     db.commit()
 
 
+def _reconcile_local_file_rows(
+    db: PostgresCatalogueDB,
+    source_conn: sqlite3.Connection,
+    table: str,
+) -> None:
+    """Remove stale target representations before copying local file rows.
+
+    Older PostgreSQL databases may contain relative-path rows created by the
+    migration backfill, while current SQLite locations use normalized absolute
+    paths.  The source SQLite database is authoritative for these two tables.
+    Remove rows belonging to source documents or source paths before the new
+    transfer run inserts the canonical rows.  Other target documents remain
+    untouched so a small fixture transfer cannot erase unrelated data.
+    """
+    source_rows = source_conn.execute(
+        f"SELECT DISTINCT source_path, document_id FROM {table}"
+    ).fetchall()
+    source_paths = [row[0] for row in source_rows]
+    source_document_ids = [
+        row[1] for row in source_rows if row[1] is not None
+    ]
+    if source_paths:
+        db.conn.execute(
+            f"DELETE FROM {table} WHERE source_path = ANY(%s)",
+            (source_paths,),
+        )
+    if source_document_ids:
+        db.conn.execute(
+            f"DELETE FROM {table} WHERE document_id = ANY(%s)",
+            (source_document_ids,),
+        )
+    db.commit()
+
+
 def transfer_sqlite_to_postgres(
     sqlite_path: str | Path,
     dsn: str | None = None,
@@ -159,12 +199,25 @@ def transfer_sqlite_to_postgres(
     run_id: int | None = None
     report: dict[str, Any] = {"tables": {}, "resumed": False}
     try:
+        existing_transfer = db.conn.execute(
+            "SELECT id, status FROM catalogue_transfer_runs "
+            "WHERE source_path=%s AND source_fingerprint=%s",
+            (str(source.resolve()), fingerprint),
+        ).fetchone()
         run_id = _transfer_run(db, source, fingerprint)
         existing_run = db.conn.execute(
             "SELECT status FROM catalogue_transfer_runs WHERE id=%s", (run_id,)
         ).fetchone()
         existing_status = _normalize_postgres_value(existing_run["status"]) if existing_run else None
         report["resumed"] = bool(existing_run and existing_status != "running")
+        existing_transfer_status = (
+            _normalize_postgres_value(existing_transfer["status"])
+            if existing_transfer
+            else None
+        )
+        new_transfer = (
+            existing_transfer is None or existing_transfer_status == "failed"
+        )
         for table in TRANSFER_TABLES:
             available = _sqlite_columns(source_conn, table.name)
             columns = tuple(column for column in table.columns if column in available)
@@ -175,8 +228,17 @@ def transfer_sqlite_to_postgres(
             if checkpoint["completed"]:
                 report["tables"][table.name] = int(checkpoint["rows_copied"])
                 continue
-            offset = int(checkpoint["source_offset"])
-            copied = int(checkpoint["rows_copied"])
+            if new_transfer and table.name in _LOCAL_LOCATION_TABLES:
+                _reconcile_local_file_rows(db, source_conn, table.name)
+            if new_transfer and table.name in _LOCAL_LOCATION_TABLES:
+                # Reconciliation removed all rows for the source documents.
+                # A failed run may have checkpointed a non-zero offset before
+                # failing, so replay the table from the beginning.
+                offset = 0
+                copied = 0
+            else:
+                offset = int(checkpoint["source_offset"])
+                copied = int(checkpoint["rows_copied"])
             statement = _upsert_sql(table, columns)
             while True:
                 rows = _source_rows(source_conn, table, columns, batch_size, offset)
