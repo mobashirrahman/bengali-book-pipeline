@@ -64,6 +64,41 @@ def test_v2_normalized_reads_are_paginated_and_read_only(tmp_path: Path) -> None
     assert client.get("/v2/works/999").status_code == 404
 
 
+def test_v2_works_supports_readable_only_filter(tmp_path: Path) -> None:
+    db_path = tmp_path / "catalogue.db"
+    db = CatalogueDB(db_path)
+    conn = db.conn
+    plain = conn.execute("INSERT INTO catalogue_works (title) VALUES ('Metadata Only')").lastrowid
+    conn.execute("INSERT INTO catalogue_editions (work_id, title) VALUES (?, 'Plain Edition')", (plain,))
+    readable = conn.execute("INSERT INTO catalogue_works (title) VALUES ('Readable Work')").lastrowid
+    edition = conn.execute(
+        "INSERT INTO catalogue_editions (work_id, title) VALUES (?, 'Readable Edition')", (readable,)
+    ).lastrowid
+    candidate_doc = conn.execute(
+        "INSERT INTO catalogue_local_documents (sha256, source_path, file_size, media_type) VALUES ('c', 'candidate.epub', 1, 'application/epub+zip')"
+    ).lastrowid
+    conn.execute(
+        "INSERT INTO catalogue_document_matches (document_id, edition_id, score, method, status) VALUES (?, ?, 1, 'manual', 'candidate')",
+        (candidate_doc, edition),
+    )
+    accepted_doc = conn.execute(
+        "INSERT INTO catalogue_local_documents (sha256, source_path, file_size, media_type) VALUES ('a', 'accepted.epub', 2, 'application/epub+zip')"
+    ).lastrowid
+    conn.execute(
+        "INSERT INTO catalogue_document_matches (document_id, edition_id, score, method, status) VALUES (?, ?, 1, 'manual', 'accepted')",
+        (accepted_doc, edition),
+    )
+    conn.commit()
+    db.close()
+    client = TestClient(init_app(db_path))
+
+    assert {work["title"] for work in client.get("/v2/works").json()} == {"Metadata Only", "Readable Work"}
+    filtered = client.get("/v2/works", params={"has_documents": "true"}).json()
+    assert [work["title"] for work in filtered] == ["Readable Work"]
+    assert client.get("/v2/works", params={"has_documents": "true", "after": readable}).json() == []
+    assert client.get("/v2/stats").json()["readable_works"] == 1
+
+
 def test_v2_requests_use_independent_connections(tmp_path: Path) -> None:
     _database(tmp_path / "catalogue.db")
     client = TestClient(init_app(tmp_path / "catalogue.db"))
@@ -250,3 +285,79 @@ def test_v2_search_rejects_malformed_cursors(tmp_path: Path) -> None:
         response = client.get("/v2/search", params={"q": "Alpha", "after": cursor})
         assert response.status_code == 400
         assert response.json()["detail"] == "invalid cursor"
+
+
+def test_v2_search_matches_identifiers_and_people_per_entity_kind(tmp_path: Path) -> None:
+    """Identifier and author matches must not leak across entity kinds.
+
+    The union that backs /v2/search carries a bare ``id`` per row, so matching
+    identifier ``entity_id`` or ``catalogue_edition_people.edition_id`` against
+    it without checking the row's kind made a work match whenever its id
+    happened to equal an unrelated edition's id.  Ids are allocated
+    independently per table, so those collisions are routine.
+    """
+    db_path = tmp_path / "catalogue.db"
+    db = CatalogueDB(db_path)
+    conn = db.conn
+    # Decoy work whose id collides with the edition that really carries the
+    # identifier and the author; its own title shares no term with the query.
+    decoy = conn.execute("INSERT INTO catalogue_works (title) VALUES ('Unrelated Manual')").lastrowid
+    match = conn.execute("INSERT INTO catalogue_works (title) VALUES ('Tagore Collected')").lastrowid
+    edition = conn.execute(
+        "INSERT INTO catalogue_editions (work_id, title) VALUES (?, 'Tagore Collected, First')", (match,)
+    ).lastrowid
+    assert int(edition) == int(decoy), "fixture needs a work id equal to the edition id"
+    person = conn.execute(
+        "INSERT INTO catalogue_people (name, normalized_name) VALUES ('Rabindranath Tagore', 'rabindranath tagore')"
+    ).lastrowid
+    conn.execute("INSERT INTO catalogue_edition_people VALUES (?, ?, 'author', 0)", (edition, person))
+    conn.execute(
+        "INSERT INTO catalogue_identifiers (entity_type, entity_id, namespace, value, normalized_value)"
+        " VALUES ('edition', ?, 'url', 'rabindranath-tagore', 'rabindranath-tagore')",
+        (edition,),
+    )
+    conn.commit()
+    db.close()
+
+    client = TestClient(init_app(db_path))
+    items = client.get("/v2/search", params={"q": "Rabindranath", "limit": 50}).json()["items"]
+
+    assert ("work", int(decoy), "Unrelated Manual") not in [(i["kind"], i["id"], i["title"]) for i in items]
+    assert {"work", "edition", "person"} >= {i["kind"] for i in items}
+    # The author's own work and edition still match through the edition people.
+    assert ("work", int(match)) in [(i["kind"], i["id"]) for i in items]
+    assert ("edition", int(edition)) in [(i["kind"], i["id"]) for i in items]
+    assert ("person", int(person)) in [(i["kind"], i["id"]) for i in items]
+
+
+def test_v2_search_supports_readable_only_filter(tmp_path: Path) -> None:
+    """has_documents narrows search to works/editions a reader can open."""
+    db_path = tmp_path / "catalogue.db"
+    db = CatalogueDB(db_path)
+    conn = db.conn
+    readable = conn.execute("INSERT INTO catalogue_works (title) VALUES ('Alpha Readable')").lastrowid
+    readable_edition = conn.execute(
+        "INSERT INTO catalogue_editions (work_id, title) VALUES (?, 'Alpha Readable Edition')", (readable,)
+    ).lastrowid
+    conn.execute("INSERT INTO catalogue_works (title) VALUES ('Alpha Metadata Only')")
+    conn.execute("INSERT INTO catalogue_people (name, normalized_name) VALUES ('Alpha Person', 'alpha person')")
+    document = conn.execute(
+        "INSERT INTO catalogue_local_documents (sha256, source_path, file_size) VALUES ('sha', 'alpha.pdf', 10)"
+    ).lastrowid
+    conn.execute(
+        "INSERT INTO catalogue_document_matches (document_id, edition_id, score, method, status)"
+        " VALUES (?, ?, 1, 'isbn', 'accepted')",
+        (document, readable_edition),
+    )
+    conn.commit()
+    db.close()
+
+    client = TestClient(init_app(db_path))
+    unfiltered = client.get("/v2/search", params={"q": "Alpha", "limit": 50}).json()["items"]
+    filtered = client.get("/v2/search", params={"q": "Alpha", "limit": 50, "has_documents": "true"}).json()["items"]
+
+    assert len(unfiltered) == 4  # two works, one edition, one person
+    assert [(item["kind"], item["id"]) for item in filtered] == [
+        ("work", int(readable)),
+        ("edition", int(readable_edition)),
+    ]

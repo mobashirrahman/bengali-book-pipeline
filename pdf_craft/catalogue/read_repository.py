@@ -79,11 +79,21 @@ def get_work(conn: Any, work_id: int) -> dict[str, Any] | None:
             "sources": [row["source"] for row in sources], "ratings": get_ratings(conn, work_id)}
 
 
-def list_works(conn: Any, limit: int, after: int | None = None) -> list[dict[str, Any]]:
-    if after is None:
-        rows = _many(conn, "SELECT * FROM catalogue_works ORDER BY id LIMIT ?", (limit,))
-    else:
-        rows = _many(conn, "SELECT * FROM catalogue_works WHERE id>? ORDER BY id LIMIT ?", (after, limit))
+def list_works(conn: Any, limit: int, after: int | None = None, has_documents: bool = False) -> list[dict[str, Any]]:
+    # has_documents restricts the listing to works with at least one accepted
+    # local document, so readers can bootstrap shelves from readable works
+    # instead of the lowest-id metadata-only records.
+    conditions: list[str] = []
+    params: list[Any] = []
+    if after is not None:
+        conditions.append("catalogue_works.id>?")
+        params.append(after)
+    if has_documents:
+        conditions.append("""EXISTS (SELECT 1 FROM catalogue_editions e
+            JOIN catalogue_document_matches m ON m.edition_id=e.id AND m.status='accepted'
+            WHERE e.work_id=catalogue_works.id)""")
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    rows = _many(conn, f"SELECT * FROM catalogue_works {where} ORDER BY id LIMIT ?", tuple(params + [limit]))
     return [{**row, "identifiers": _identifiers(conn, "work", row["id"]), "editions": [], "sources": [],
              "ratings": get_ratings(conn, row["id"])} for row in rows]
 
@@ -185,6 +195,10 @@ def stats(conn: Any) -> dict[str, Any]:
     }
     sources = _many(conn, "SELECT source, COUNT(*) AS records FROM catalogue_source_records GROUP BY source ORDER BY source")
     counts["source_coverage"] = sources
+    counts["readable_works"] = _execute(
+        conn, """SELECT COUNT(DISTINCT e.work_id) AS count FROM catalogue_editions e
+            JOIN catalogue_document_matches m ON m.edition_id=e.id AND m.status='accepted'"""
+    ).fetchone()["count" if _is_postgres(conn) else 0]
     return counts
 
 
@@ -212,27 +226,64 @@ def encode_cursor(title: str, item_id: int, kind: str) -> str:
     return base64.urlsafe_b64encode(json.dumps([title, item_id, kind]).encode()).decode().rstrip("=")
 
 
-def search(conn: Any, query: str, limit: int, after: str | None = None) -> dict[str, Any]:
+def search(
+    conn: Any, query: str, limit: int, after: str | None = None, has_documents: bool = False
+) -> dict[str, Any]:
+    # Each entity kind filters inside its own UNION branch rather than sharing
+    # one predicate over the combined rows.  A shared predicate compared the
+    # union's bare `id` against identifier and edition-people ids regardless of
+    # kind, so a work matched whenever its id happened to equal an unrelated
+    # edition's id -- searching an author name returned arbitrary books.
+    # Filtering per branch also keeps the non-correlated IN subqueries, so the
+    # union stays small enough to sort by title without scanning the catalogue.
     cursor = _decode_cursor(after)
     needle = f"%{query}%"
-    params: list[Any] = [needle, needle, needle]
+    like = "ILIKE" if _is_postgres(conn) else "LIKE"
     if _is_postgres(conn):
-        title_match = "s.title ILIKE ?"
         order = "LOWER(s.title), s.id, s.kind"
-        predicate = "" if cursor is None else " AND (LOWER(s.title) > LOWER(?) OR (LOWER(s.title) = LOWER(?) AND (s.id > ? OR (s.id = ? AND s.kind > ?))))"
+        predicate = "" if cursor is None else "(LOWER(s.title) > LOWER(?) OR (LOWER(s.title) = LOWER(?) AND (s.id > ? OR (s.id = ? AND s.kind > ?))))"
     else:
-        title_match = "s.title LIKE ?"
         order = "s.title COLLATE NOCASE, s.id, s.kind"
-        predicate = "" if cursor is None else " AND (s.title COLLATE NOCASE > ? COLLATE NOCASE OR (s.title COLLATE NOCASE = ? COLLATE NOCASE AND (s.id > ? OR (s.id = ? AND s.kind > ?))))"
+        predicate = "" if cursor is None else "(s.title COLLATE NOCASE > ? COLLATE NOCASE OR (s.title COLLATE NOCASE = ? COLLATE NOCASE AND (s.id > ? OR (s.id = ? AND s.kind > ?))))"
+
+    # has_documents mirrors the /v2/works filter: only works and editions that
+    # resolve to an accepted local document are returned.  People can never
+    # carry a document, so that branch drops out entirely.
+    work_readable = """ AND EXISTS (SELECT 1 FROM catalogue_editions de
+        JOIN catalogue_document_matches dm ON dm.edition_id=de.id AND dm.status='accepted'
+        WHERE de.work_id=w.id)""" if has_documents else ""
+    edition_readable = """ AND EXISTS (SELECT 1 FROM catalogue_document_matches dm
+        WHERE dm.edition_id=e.id AND dm.status='accepted')""" if has_documents else ""
+
+    branches = [
+        f"""SELECT 'work' AS kind, w.id, w.title, w.id AS work_id FROM catalogue_works w
+            WHERE (w.title {like} ?
+                OR w.id IN (SELECT entity_id FROM catalogue_identifiers
+                            WHERE entity_type='work' AND value {like} ?)
+                OR w.id IN (SELECT e2.work_id FROM catalogue_editions e2
+                            JOIN catalogue_edition_people ep ON ep.edition_id=e2.id
+                            JOIN catalogue_people p ON p.id=ep.person_id
+                            WHERE p.name {like} ?)){work_readable}""",
+        f"""SELECT 'edition' AS kind, e.id, e.title, e.work_id FROM catalogue_editions e
+            WHERE (e.title {like} ?
+                OR e.id IN (SELECT entity_id FROM catalogue_identifiers
+                            WHERE entity_type='edition' AND value {like} ?)
+                OR e.id IN (SELECT ep.edition_id FROM catalogue_edition_people ep
+                            JOIN catalogue_people p ON p.id=ep.person_id
+                            WHERE p.name {like} ?)){edition_readable}""",
+    ]
+    params: list[Any] = [needle] * 6
+    if not has_documents:
+        branches.append(f"SELECT 'person' AS kind, p.id, p.name AS title, NULL AS work_id FROM catalogue_people p WHERE p.name {like} ?")
+        params.append(needle)
     if cursor:
         params.extend((cursor[0], cursor[0], cursor[1], cursor[1], cursor[2]))
+
+    union = " UNION ALL ".join(branches)
+    where = f"WHERE {predicate} " if predicate else ""
     rows = _many(conn, f"""SELECT s.kind, s.id, s.title, s.work_id FROM (
-        SELECT 'work' AS kind, id, title, id AS work_id FROM catalogue_works
-        UNION ALL SELECT 'edition', id, title, work_id FROM catalogue_editions
-        UNION ALL SELECT 'person', p.id, p.name, NULL FROM catalogue_people p
-    ) s WHERE ({title_match} OR s.id IN (SELECT entity_id FROM catalogue_identifiers WHERE value {"ILIKE" if _is_postgres(conn) else "LIKE"} ?)
-        OR (s.kind IN ('work','edition') AND s.id IN (SELECT ep.edition_id FROM catalogue_edition_people ep JOIN catalogue_people p ON p.id=ep.person_id WHERE p.name {"ILIKE" if _is_postgres(conn) else "LIKE"} ?)))
-        {predicate} ORDER BY {order} LIMIT ?""", tuple(params + [limit + 1]))
+        {union}
+    ) s {where}ORDER BY {order} LIMIT ?""", tuple(params + [limit + 1]))
     has_more = len(rows) > limit
     rows = rows[:limit]
     next_cursor = encode_cursor(rows[-1]["title"], rows[-1]["id"], rows[-1]["kind"]) if has_more and rows else None

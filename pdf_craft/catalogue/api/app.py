@@ -388,6 +388,7 @@ class NormalizedStatsResponse(BaseModel):
     document_matches: int
     assets: int
     artifacts: int
+    readable_works: int
     source_coverage: list[dict]
 
 
@@ -434,10 +435,13 @@ def normalized_stats(db: CatalogueDB | PostgresCatalogueDB = Depends(get_db)) ->
 @app.get("/v2/search", response_model=NormalizedSearchResponse)
 def normalized_search(
     q: str = Query(..., min_length=1), limit: int = Query(20, ge=1, le=100),
-    after: str | None = Query(None), db: CatalogueDB | PostgresCatalogueDB = Depends(get_db),
+    after: str | None = Query(None), has_documents: bool = Query(False),
+    db: CatalogueDB | PostgresCatalogueDB = Depends(get_db),
 ) -> NormalizedSearchResponse:
+    # has_documents is additive and defaults off, so existing callers keep the
+    # unfiltered result set; readers pass it to search only what they can open.
     try:
-        return NormalizedSearchResponse(**read_repository.search(db.conn, q, limit, after))
+        return NormalizedSearchResponse(**read_repository.search(db.conn, q, limit, after, has_documents))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -445,9 +449,10 @@ def normalized_search(
 @app.get("/v2/works", response_model=list[NormalizedWorkResponse])
 def normalized_works(
     limit: int = Query(20, ge=1, le=100), after: int | None = Query(None, ge=0),
+    has_documents: bool = Query(False),
     db: CatalogueDB | PostgresCatalogueDB = Depends(get_db),
 ) -> list[NormalizedWorkResponse]:
-    return [NormalizedWorkResponse(**row) for row in read_repository.list_works(db.conn, limit, after)]
+    return [NormalizedWorkResponse(**row) for row in read_repository.list_works(db.conn, limit, after, has_documents)]
 
 
 @app.get("/v2/works/{work_id}", response_model=NormalizedWorkResponse)
@@ -561,6 +566,15 @@ def _serve_document_content(
 
 @app.api_route("/v2/documents/{document_id}/content", methods=["GET", "HEAD"])
 def document_content(
+    document_id: int,
+    request: Request,
+    db: CatalogueDB | PostgresCatalogueDB = Depends(get_db),
+) -> Response:
+    return _serve_document_content(document_id, request, db, download=False)
+
+
+@app.api_route("/v2/documents/{document_id}/content.epub", methods=["GET", "HEAD"])
+def document_content_epub(
     document_id: int,
     request: Request,
     db: CatalogueDB | PostgresCatalogueDB = Depends(get_db),
