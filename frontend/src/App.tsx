@@ -39,7 +39,7 @@ export default function App() {
     try {
       const [health, workRows, catalogueStats] = await Promise.all([api.health(signal), api.works({ limit: 24, signal }), api.stats(signal)])
       if (health.status !== 'ok') throw new Error('The catalogue health check did not return an OK status.')
-      setBooks(workRows.map(workToBook))
+      setBooks(workRows.map((work) => workToBook(work, api.assetContentUrl)))
       setStats(catalogueStats)
       setMode('live')
     } catch (reason: unknown) {
@@ -67,7 +67,7 @@ export default function App() {
     if (mode === 'demo') return []
     const response = await api.search(query || 'a', { limit: 24 })
     const details = await Promise.all(response.items.filter((item) => item.kind !== 'person').slice(0, 12).map(async (item) => {
-      try { return workToBook(await api.work(item.work_id ?? item.id)) } catch { return undefined }
+      try { return workToBook(await api.work(item.work_id ?? item.id), api.assetContentUrl) } catch { return undefined }
     }))
     return details.filter((book): book is BookRecord => Boolean(book))
   }, [mode])
@@ -96,7 +96,7 @@ function useRouteBook(route: Route, mode: DataMode, initial: BookRecord | undefi
     if (!Number.isInteger(numericId)) { setLocalError('This work id is not valid.'); return }
     const controller = new AbortController()
     setLoading(true); setLocalError(undefined); setError(undefined)
-    api.work(numericId, controller.signal).then((work) => setBook(workToBook(work))).catch((reason: unknown) => {
+    api.work(numericId, controller.signal).then((work) => setBook(workToBook(work, api.assetContentUrl))).catch((reason: unknown) => {
       if (reason instanceof DOMException && reason.name === 'AbortError') return
       const message = reason instanceof Error ? reason.message : 'This work could not be loaded.'
       setLocalError(message); setError(message)

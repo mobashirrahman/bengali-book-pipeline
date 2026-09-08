@@ -12,6 +12,8 @@ import json
 from typing import Any
 
 from .postgres import _normalize_postgres_value
+from .ratings import community_rating as _community_rating
+from .ratings import get_user_rating as _get_user_rating
 
 
 def _is_postgres(conn: Any) -> bool:
@@ -67,7 +69,7 @@ def get_work(conn: Any, work_id: int) -> dict[str, Any] | None:
         JOIN catalogue_source_record_editions sre ON sre.source_record_id=sr.id
         JOIN catalogue_editions e ON e.id=sre.edition_id WHERE e.work_id=? ORDER BY sr.source""", (work_id,))
     return {**work, "identifiers": _identifiers(conn, "work", work_id), "editions": editions,
-            "sources": [row["source"] for row in sources]}
+            "sources": [row["source"] for row in sources], "ratings": get_ratings(conn, work_id)}
 
 
 def list_works(conn: Any, limit: int, after: int | None = None) -> list[dict[str, Any]]:
@@ -75,7 +77,48 @@ def list_works(conn: Any, limit: int, after: int | None = None) -> list[dict[str
         rows = _many(conn, "SELECT * FROM catalogue_works ORDER BY id LIMIT ?", (limit,))
     else:
         rows = _many(conn, "SELECT * FROM catalogue_works WHERE id>? ORDER BY id LIMIT ?", (after, limit))
-    return [{**row, "identifiers": _identifiers(conn, "work", row["id"]), "editions": [], "sources": []} for row in rows]
+    return [{**row, "identifiers": _identifiers(conn, "work", row["id"]), "editions": [], "sources": [],
+             "ratings": get_ratings(conn, row["id"])} for row in rows]
+
+
+def _external_ratings(conn: Any, work_id: int) -> list[dict[str, Any]]:
+    rows = _many(conn, """SELECT r.provider, r.value, r.scale, r.rating_count,
+        r.review_count, r.source_url
+        FROM catalogue_external_ratings r
+        JOIN catalogue_editions e ON e.id=r.edition_id
+        WHERE e.work_id=? ORDER BY r.provider, r.id""", (work_id,))
+    ratings = [{
+        "provider": row["provider"],
+        "rating_value": float(row["value"]),
+        "scale_max": float(row["scale"]),
+        "rating_count": row["rating_count"],
+        "review_count": row["review_count"],
+        "source_url": row["source_url"],
+        "status": "available",
+        "reason": None,
+    } for row in rows]
+    if not any(row["provider"] == "goodreads" for row in ratings):
+        ratings.append({
+            "provider": "goodreads",
+            "rating_value": None,
+            "scale_max": 5.0,
+            "rating_count": None,
+            "review_count": None,
+            "source_url": None,
+            "status": "unavailable",
+            "reason": "not_imported",
+        })
+    return ratings
+
+
+def get_ratings(conn: Any, work_id: int, user_subject: str | None = None) -> dict[str, Any]:
+    community = _community_rating(conn, work_id)
+    community["user_rating"] = _get_user_rating(conn, work_id, user_subject)
+    return {"work_id": work_id, "community": community, "external": _external_ratings(conn, work_id)}
+
+
+def work_exists(conn: Any, work_id: int) -> bool:
+    return _one(conn, "SELECT id FROM catalogue_works WHERE id=?", (work_id,)) is not None
 
 
 def get_editions_for_work(conn: Any, work_id: int) -> list[dict[str, Any]]:

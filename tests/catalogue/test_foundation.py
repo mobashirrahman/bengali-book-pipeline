@@ -15,7 +15,7 @@ def test_schema_migrates_existing_v1_database(tmp_path: Path) -> None:
     db_path = tmp_path / "catalogue.db"
     db = CatalogueDB(db_path)
     version = db.conn.execute("SELECT version FROM schema_version").fetchone()[0]
-    assert version == 4
+    assert version == 9
     assert db.conn.execute(
         "SELECT name FROM sqlite_master WHERE name='catalogue_works'"
     ).fetchone()
@@ -24,6 +24,12 @@ def test_schema_migrates_existing_v1_database(tmp_path: Path) -> None:
     ).fetchone()
     assert db.conn.execute(
         "SELECT name FROM sqlite_master WHERE name='catalogue_local_inventory'"
+    ).fetchone()
+    assert db.conn.execute(
+        "SELECT name FROM sqlite_master WHERE name='catalogue_external_ratings'"
+    ).fetchone()
+    assert db.conn.execute(
+        "SELECT name FROM sqlite_master WHERE name='catalogue_user_ratings'"
     ).fetchone()
     db.close()
 

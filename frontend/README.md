@@ -22,10 +22,10 @@ To preview the deterministic local catalogue without making an API request, use 
 
 - `/` — featured home and horizontal shelves
 - `/discover` — search and results grid; supports `?q=`
-- `/works/:id` — work detail, cover provenance, and local rating
+- `/works/:id` — work detail, cover provenance, catalogue ratings, and a sync-aware personal rating control
 - `/read/:id` — protected PDF reader/download or in-app EPUB reader; demo records show an explicit preview shell
 
-The typed adapter in `src/lib/api.ts` covers `/v2/health`, `/v2/stats`, `/v2/search`, `/v2/works`, `/v2/editions`, and `/v2/documents`, including `AbortSignal` cancellation, HTTP errors, and the API's `after` cursors. Protected document URLs are built from `VITE_API_BASE_URL` at `/v2/documents/:id/content` and `/v2/documents/:id/download`; browser credentials/cookies remain available to those URLs.
+The typed adapter in `src/lib/api.ts` covers `/v2/health`, `/v2/stats`, `/v2/search`, `/v2/works`, `/v2/works/:id/ratings`, `/v2/editions`, `/v2/documents`, and selected asset content, including `AbortSignal` cancellation, HTTP errors, and the API's `after` cursors. Protected document URLs are built from `VITE_API_BASE_URL` at `/v2/documents/:id/content` and `/v2/documents/:id/download`; browser credentials/cookies remain available to those URLs. Personal rating writes pass backend errors through the UI; the default backend's 401 is shown as `Sign in to sync`.
 
 Live PDF documents open in a browser iframe and expose a download action. Live EPUB documents are rendered in the app through `epubjs`. Unsupported or missing accepted documents remain visible as unavailable states.
 

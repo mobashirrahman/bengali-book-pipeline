@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
-import type { BookDocument, BookRecord, DataMode, Route, StatsResponse } from '../lib/types'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { ApiError, createCatalogueApi } from '../lib/api'
+import type { BookDocument, BookRecord, DataMode, RatingsResponse, Route, StatsResponse } from '../lib/types'
 import { DEMO_BOOKS, DEMO_CATEGORIES, findDemoBook, searchDemoBooks } from '../lib/demoData'
 import { CoverImage } from './CoverImage'
 import { Shelf } from './Shelf'
@@ -69,18 +70,156 @@ export function DiscoverView({ books, mode, navigate, onOpen, initialQuery, apiS
 
 interface WorkViewProps { book?: BookRecord; mode: DataMode; navigate: (href: string) => void; related: BookRecord[]; loading?: boolean; error?: string }
 
+const detailApi = createCatalogueApi(import.meta.env.VITE_API_BASE_URL ?? '')
+
+type RatingSyncState = 'idle' | 'saving' | 'saved' | 'unavailable' | 'error' | 'demo'
+
 export function WorkView({ book, mode, navigate, related, loading, error }: WorkViewProps) {
-  const [rating, setRating] = useState(() => Number(localStorage.getItem(`folio-rating-${book?.id ?? 'unknown'}`)) || 0)
-  useEffect(() => { if (book) setRating(Number(localStorage.getItem(`folio-rating-${book.id}`)) || 0) }, [book])
-  const saveRating = (value: number) => { setRating(value); if (book) localStorage.setItem(`folio-rating-${book.id}`, String(value)) }
+  const [ratings, setRatings] = useState<RatingsResponse | undefined>(book?.ratings)
+  const [ratingsLoading, setRatingsLoading] = useState(Boolean(book && mode === 'live'))
+  const [ratingsError, setRatingsError] = useState<string>()
+  const [ratingsAttempt, setRatingsAttempt] = useState(0)
+  const [rating, setRating] = useState(book?.ratings?.community.user_rating ?? 0)
+  const [ratingSync, setRatingSync] = useState<RatingSyncState>(mode === 'demo' ? 'demo' : 'idle')
+  const [ratingError, setRatingError] = useState<string>()
+  const mutationController = useRef<AbortController | undefined>(undefined)
+
+  useEffect(() => {
+    if (!book) return
+    setRating(book.ratings?.community.user_rating ?? 0)
+    setRatingSync(mode === 'demo' ? 'demo' : 'idle')
+    setRatingError(undefined)
+    if (mode === 'demo') {
+      setRatings(book.ratings)
+      setRatingsLoading(false)
+      setRatingsError(undefined)
+      return
+    }
+    const workId = book.workId ?? Number(book.id)
+    if (!Number.isInteger(workId)) {
+      setRatings(undefined)
+      setRatingsLoading(false)
+      setRatingsError('Ratings are unavailable for this work.')
+      return
+    }
+    const controller = new AbortController()
+    setRatingsLoading(true)
+    setRatingsError(undefined)
+    detailApi.ratings(workId, controller.signal).then((next) => {
+      setRatings(next)
+      setRating(next.community.user_rating ?? 0)
+    }).catch((reason: unknown) => {
+      if (reason instanceof DOMException && reason.name === 'AbortError') return
+      setRatingsError(reason instanceof Error ? reason.message : 'Ratings could not be loaded.')
+    }).finally(() => {
+      if (!controller.signal.aborted) setRatingsLoading(false)
+    })
+    return () => controller.abort()
+  }, [book?.id, book?.workId, mode, ratingsAttempt])
+
+  useEffect(() => () => mutationController.current?.abort(), [])
+
+  const updateRating = async (value: number) => {
+    setRating(value)
+    setRatingError(undefined)
+    if (mode === 'demo') {
+      setRatingSync('demo')
+      return
+    }
+    const workId = book?.workId ?? Number(book?.id)
+    if (!Number.isInteger(workId)) return
+    mutationController.current?.abort()
+    const controller = new AbortController()
+    mutationController.current = controller
+    setRatingSync('saving')
+    try {
+      const next = await detailApi.setRating(workId, value, controller.signal)
+      setRatings(next)
+      setRating(next.community.user_rating ?? value)
+      setRatingSync('saved')
+    } catch (reason: unknown) {
+      if (reason instanceof DOMException && reason.name === 'AbortError') return
+      if (reason instanceof ApiError && reason.status === 401) {
+        setRatingSync('unavailable')
+      } else {
+        setRatingSync('error')
+        setRatingError(reason instanceof Error ? reason.message : 'Your rating could not be synced.')
+      }
+    } finally {
+      if (mutationController.current === controller) mutationController.current = undefined
+    }
+  }
+
+  const clearRating = async () => {
+    setRatingError(undefined)
+    if (mode === 'demo') {
+      setRating(0)
+      setRatingSync('demo')
+      return
+    }
+    const workId = book?.workId ?? Number(book?.id)
+    if (!Number.isInteger(workId)) return
+    mutationController.current?.abort()
+    const controller = new AbortController()
+    mutationController.current = controller
+    setRatingSync('saving')
+    try {
+      const next = await detailApi.deleteRating(workId, controller.signal)
+      setRatings(next)
+      setRating(next.community.user_rating ?? 0)
+      setRatingSync('saved')
+    } catch (reason: unknown) {
+      if (reason instanceof DOMException && reason.name === 'AbortError') return
+      if (reason instanceof ApiError && reason.status === 401) {
+        setRatingSync('unavailable')
+      } else {
+        setRatingSync('error')
+        setRatingError(reason instanceof Error ? reason.message : 'Your rating could not be removed.')
+      }
+    } finally {
+      if (mutationController.current === controller) mutationController.current = undefined
+    }
+  }
+
+  const ratingNote = mode === 'demo'
+    ? 'Demo only · not synced'
+    : ratingSync === 'saving' ? 'Saving…'
+      : ratingSync === 'saved' ? 'Synced'
+        : ratingSync === 'error' ? 'Couldn’t sync'
+          : 'Sign in to sync'
   if (loading) return <main className="wrap loading-page"><div className="loading-block" /><div className="loading-block loading-block--short" /></main>
   if (!book || error) return <main className="wrap empty-state page-empty"><BookIcon /><h1>Work unavailable</h1><p>{error ?? 'This work could not be found in the catalogue.'}</p><button className="button button--dark" onClick={() => navigate('/discover')}>Back to discover</button></main>
   return <main>
-    <section className="detail wrap"><div className="detail__cover"><CoverImage title={book.title} sourceUrl={book.coverUrl} accent={book.accent} size="large" attribution={book.coverAttribution} /><p className="provenance"><span className={`provenance__dot provenance__dot--${book.sourceKind}`} />{book.sourceKind === 'demo' ? 'Demo record · local preview' : `Source: ${book.sourceLabel}`}</p></div><div className="detail__copy"><p className="eyebrow">{book.category} <span aria-hidden="true">·</span> {book.year}</p><h1>{book.title}</h1>{book.subtitle && <p className="detail__subtitle">{book.subtitle}</p>}<p className="detail__author">by <strong>{book.author}</strong></p><p className="detail__description">{book.description}</p><div className="detail__actions"><button className="button button--light" onClick={() => navigate(`/read/${book.id}`)}>Read now <ArrowIcon /></button><button className="button button--outline">+ Add to shelf</button></div><div className="detail__meta"><span><strong>{book.pages || '—'}</strong> pages</span><span><strong>{book.readingTime}</strong></span><span><strong>{book.language}</strong></span></div><RatingControl value={rating} onChange={saveRating} /></div></section>
+    <section className="detail wrap"><div className="detail__cover"><CoverImage title={book.title} sourceUrl={book.coverUrl} accent={book.accent} size="large" attribution={book.coverAttribution} /><p className="provenance"><span className={`provenance__dot provenance__dot--${book.sourceKind}`} />{book.sourceKind === 'demo' ? 'Demo record · local preview' : `Source: ${book.sourceLabel}`}</p></div><div className="detail__copy"><p className="eyebrow">{book.category} <span aria-hidden="true">·</span> {book.year}</p><h1>{book.title}</h1>{book.subtitle && <p className="detail__subtitle">{book.subtitle}</p>}<p className="detail__author">by <strong>{book.author}</strong></p><p className="detail__description">{book.description}</p><div className="detail__actions"><button className="button button--light" onClick={() => navigate(`/read/${book.id}`)}>Read now <ArrowIcon /></button><button className="button button--outline">+ Add to shelf</button></div><div className="detail__meta"><span><strong>{book.pages || '—'}</strong> pages</span><span><strong>{book.readingTime}</strong></span><span><strong>{book.language}</strong></span></div><RatingControl value={rating} onChange={updateRating} onClear={rating ? clearRating : undefined} disabled={ratingSync === 'saving'} note={ratingNote} />{ratingError && <p className="rating-control__error" role="alert">{ratingError}</p>}<RatingsPanel ratings={ratings} loading={ratingsLoading} error={ratingsError} onRetry={() => setRatingsAttempt((attempt) => attempt + 1)} /></div></section>
     <section className="wrap detail-notes"><div><p className="eyebrow">About this edition</p><p>Folio keeps catalogue provenance visible as you read. Metadata may come from multiple sources; the selected cover and edition are shown above.</p></div><div><p className="eyebrow">Topics</p><div className="tag-list">{book.tags.map((tag) => <span key={tag}>{tag}</span>)}</div></div></section>
     <div className="wrap page-section"><Shelf title="Keep exploring" kicker="After this one" books={related.filter((item) => item.id !== book.id).slice(0, 4)} onOpen={(item) => navigate(`/works/${item.id}`)} /></div>
     <p className="detail-mode-note">{mode === 'demo' ? 'You are viewing an explicit demo record. It is not a live catalogue item.' : 'Live catalogue record'}</p>
   </main>
+}
+
+function RatingsPanel({ ratings, loading, error, onRetry }: { ratings?: RatingsResponse; loading: boolean; error?: string; onRetry: () => void }) {
+  return <section className="ratings-panel" aria-labelledby="ratings-title" aria-busy={loading}>
+    <div className="ratings-panel__heading"><p className="eyebrow" id="ratings-title">Ratings</p>{loading && <span className="ratings-panel__status">Loading…</span>}</div>
+    {loading ? <div className="ratings-panel__loading" role="status">Checking the catalogue sources…</div> : error ? <div className="ratings-panel__error" role="alert"><span>{error}</span><button className="text-link" onClick={onRetry}>Retry</button></div> : ratings ? <>
+      <div className="ratings-panel__community"><strong>{ratings.community.average === null ? '—' : ratings.community.average.toFixed(1)}</strong><span>Community average · {ratings.community.count} {ratings.community.count === 1 ? 'rating' : 'ratings'}</span></div>
+      <div className="ratings-panel__sources">
+        {ratings.external.filter((entry) => entry.status === 'available').map((entry) => <ExternalRating key={`${entry.provider}-${entry.source_url ?? 'record'}`} entry={entry} />)}
+        {ratings.external.filter((entry) => entry.status === 'unavailable').map((entry) => <div className="ratings-source ratings-source--unavailable" key={entry.provider}><span>{providerLabel(entry.provider)}</span><small>{entry.reason === 'not_imported' ? 'Not imported yet' : 'Unavailable'}</small></div>)}
+      </div>
+    </> : <p className="ratings-panel__empty">Ratings are unavailable for this record.</p>}
+  </section>
+}
+
+function ExternalRating({ entry }: { entry: RatingsResponse['external'][number] }) {
+  const label = <><span>{providerLabel(entry.provider)}</span><strong>{entry.rating_value === null ? '—' : `${entry.rating_value} / ${entry.scale_max}`}</strong><small>{entry.rating_count === null ? 'No rating count supplied' : `${entry.rating_count.toLocaleString()} ratings`}</small></>
+  return <div className="ratings-source">{entry.source_url ? <a href={entry.source_url} target="_blank" rel="noreferrer">{label}</a> : label}</div>
+}
+
+function providerLabel(provider: string) {
+  if (provider === 'rokomari') return 'Rokomari'
+  if (provider === 'google_books') return 'Google Books'
+  if (provider === 'goodreads') return 'Goodreads'
+  return provider
 }
 
 interface ReaderProps {

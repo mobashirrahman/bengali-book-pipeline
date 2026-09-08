@@ -4,8 +4,8 @@ import sqlite3
 from os.path import abspath, normcase, normpath
 from pathlib import Path
 
-SCHEMA_VERSION = 4
-_MAX_COMPATIBLE_SCHEMA_VERSION = 4
+SCHEMA_VERSION = 9
+_MAX_COMPATIBLE_SCHEMA_VERSION = 9
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS books (
@@ -437,6 +437,42 @@ CREATE INDEX IF NOT EXISTS idx_catalogue_inventory_document
     ON catalogue_local_inventory(document_id);
 """
 
+_RATINGS_DDL = """
+CREATE TABLE IF NOT EXISTS catalogue_external_ratings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider TEXT NOT NULL,
+    edition_id INTEGER NOT NULL REFERENCES catalogue_editions(id) ON DELETE CASCADE,
+    source_record_id INTEGER REFERENCES catalogue_source_records(id) ON DELETE SET NULL,
+    external_id TEXT,
+    value REAL NOT NULL CHECK(value >= 0),
+    scale REAL NOT NULL CHECK(scale > 0),
+    rating_count INTEGER CHECK(rating_count IS NULL OR rating_count >= 0),
+    review_count INTEGER CHECK(review_count IS NULL OR review_count >= 0),
+    source_url TEXT,
+    observed_at TEXT NOT NULL,
+    retrieved_at TEXT,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    UNIQUE(provider, edition_id, source_record_id)
+);
+
+CREATE TABLE IF NOT EXISTS catalogue_user_ratings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    work_id INTEGER NOT NULL REFERENCES catalogue_works(id) ON DELETE CASCADE,
+    user_subject TEXT NOT NULL,
+    rating INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 5),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(user_subject, work_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_catalogue_external_ratings_edition
+    ON catalogue_external_ratings(edition_id, provider, observed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_catalogue_external_ratings_provider
+    ON catalogue_external_ratings(provider, external_id);
+CREATE INDEX IF NOT EXISTS idx_catalogue_user_ratings_work
+    ON catalogue_user_ratings(work_id, updated_at DESC);
+"""
+
 _CATALOGUE_WORK_COLUMNS = {
     "subtitle": "TEXT",
     "sort_title": "TEXT",
@@ -583,6 +619,11 @@ def _ensure_local_file_catalogue(conn: sqlite3.Connection) -> None:
             )
 
 
+def _ensure_ratings(conn: sqlite3.Connection) -> None:
+    """Install additive external and community rating tables."""
+    conn.executescript(_RATINGS_DDL)
+
+
 def initialize_database(db_path: str | Path) -> sqlite3.Connection:
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -627,6 +668,7 @@ def initialize_database(db_path: str | Path) -> sqlite3.Connection:
     _ensure_v3(conn)
     _ensure_assets(conn)
     _ensure_local_file_catalogue(conn)
+    _ensure_ratings(conn)
     conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
     conn.commit()
     return conn

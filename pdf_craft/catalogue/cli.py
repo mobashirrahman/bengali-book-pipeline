@@ -115,6 +115,17 @@ def cmd_materialize_source(args: argparse.Namespace) -> None:
     db.close()
 
 
+def cmd_materialize_ratings(args: argparse.Namespace) -> None:
+    from .ratings import materialize_external_ratings
+
+    db = CatalogueDB(args.db)
+    report = materialize_external_ratings(
+        db, source=args.source, batch_size=args.batch_size,
+    )
+    print("Rating materialization: " + ", ".join(f"{key}={value}" for key, value in report.items()))
+    db.close()
+
+
 def cmd_cover(args: argparse.Namespace) -> None:
     if args.dry_run:
         print(f"Would perform cover action {args.action}")
@@ -307,7 +318,12 @@ def cmd_serve(args: argparse.Namespace) -> None:
 
     from .api.app import init_app
 
-    app = init_app(args.db, postgres_dsn=args.postgres_dsn, content_root=args.content_root)
+    app = init_app(
+        args.db,
+        postgres_dsn=args.postgres_dsn,
+        content_root=args.content_root,
+        asset_root=args.asset_root,
+    )
     uvicorn.run(app, host=args.host, port=args.port)
 
 
@@ -372,6 +388,14 @@ def main() -> None:
     p_materialize.add_argument("--batch-size", type=int, default=500)
     p_materialize.add_argument("--dry-run", action="store_true")
     p_materialize.set_defaults(func=cmd_materialize_source)
+
+    p_ratings = sub.add_parser(
+        "materialize-ratings", help="Materialize external ratings from staged source records"
+    )
+    p_ratings.add_argument("--db", default="catalogue.db")
+    p_ratings.add_argument("--source", choices=("rokomari", "google_books", "goodreads"))
+    p_ratings.add_argument("--batch-size", type=int, default=500)
+    p_ratings.set_defaults(func=cmd_materialize_ratings)
 
     p_cover = sub.add_parser("cover", help="Register, fetch, or select cover assets")
     p_cover.add_argument("action", choices=("register-url", "register-file", "fetch", "select"))
@@ -452,6 +476,10 @@ def main() -> None:
     p_serve.add_argument(
         "--content-root",
         help="Approved root for serving local PDF/EPUB documents (also CATALOGUE_CONTENT_ROOT)",
+    )
+    p_serve.add_argument(
+        "--asset-root",
+        help="Approved root for serving selected local raster assets (also CATALOGUE_ASSET_ROOT)",
     )
     p_serve.set_defaults(func=cmd_serve)
 

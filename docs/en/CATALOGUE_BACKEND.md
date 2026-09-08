@@ -53,7 +53,7 @@ usable results during the initial enrichment pass, so they have not been
 treated as silently merged metadata.
 
 The database currently uses SQLite for the compatibility and unit-test path.
-The normalized API is read-only and is available under `/v2`:
+The normalized API is available under `/v2`:
 
 - `/v2/health` and `/v2/stats`
 - `/v2/search?q=...&limit=...&after=...`
@@ -61,6 +61,27 @@ The normalized API is read-only and is available under `/v2`:
 - `/v2/editions/{id}`
 - `/v2/documents/{id}`
 - `/v2/assets/{id}`
+- `/v2/assets/{id}/content` for a selected local raster cover
+- `/v2/works/{id}/ratings`
+
+Schema version 9 adds `catalogue_external_ratings` and
+`catalogue_user_ratings`. External rows retain provider, edition and staged
+source-record provenance, source URL, counts, scale, and observation times.
+Community rows are keyed by the trusted authentication subject and work; the
+legacy `reviews` table remains unchanged.
+
+`GET /v2/works/{id}/ratings` returns a stable object with `work_id`,
+`community { average, count, user_rating }`, and `external` entries with
+`provider`, `rating_value`, `scale_max`, `rating_count`, `review_count`,
+`source_url`, `status`, and `reason`. When no Goodreads row exists, the
+external list includes `{ "provider": "goodreads", "status": "unavailable",
+"reason": "not_imported" }` with null value and count fields.
+
+`PUT /v2/works/{id}/rating` accepts `{"rating": 1}` through
+`{"rating": 5}` and `DELETE` removes the current subject's rating. Both
+writes return the same ratings object. The default app returns 401 because it
+has no authentication provider. Deployments inject `auth_resolver` into
+`init_app`; it receives the request and returns the trusted subject string.
 
 Requests open and close their own SQLite connection. `/v1` remains available
 for existing clients.
@@ -235,7 +256,8 @@ python -m pdf_craft.catalogue.cli stats \
   --db pdf-craft-output/catalogue/catalogue.db
 python -m pdf_craft.catalogue.cli serve \
   --db pdf-craft-output/catalogue/catalogue.db \
-  --content-root /absolute/path/to/approved/book/files
+  --content-root /absolute/path/to/approved/book/files \
+  --asset-root /absolute/path/to/approved/cover/assets
 ```
 
 The API does not serve files unless an approved content root is configured.
@@ -247,6 +269,11 @@ ranges, ETags, and the stored media type. Keep the content root read-only for
 the API process and point it at a deployment-specific mount rather than
 putting a machine-local path into the database.
 
+Selected local cover content is served only when `--asset-root` or
+`CATALOGUE_ASSET_ROOT` is configured. The endpoint uses the database-selected
+asset's `storage_uri`, rejects remote URL records and traversal or symlink
+escapes, and serves only registered raster MIME types with `nosniff`.
+
 Stage supplied source files before materializing them:
 
 ```bash
@@ -256,6 +283,9 @@ python -m pdf_craft.catalogue.cli stage-rokomari \
   --snapshot-key sayurio-rokomari-bd-product-data \
   --batch-size 1000
 python -m pdf_craft.catalogue.cli materialize-source \
+  --db pdf-craft-output/catalogue/catalogue.db \
+  --source rokomari --batch-size 500
+python -m pdf_craft.catalogue.cli materialize-ratings \
   --db pdf-craft-output/catalogue/catalogue.db \
   --source rokomari --batch-size 500
 python -m pdf_craft.catalogue.cli stage-google \

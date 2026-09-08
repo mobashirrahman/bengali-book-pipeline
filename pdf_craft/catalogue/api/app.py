@@ -1,20 +1,21 @@
 from __future__ import annotations
 
-import os
-from collections.abc import Generator, Sequence
-from email.utils import formatdate
 import mimetypes
+import os
+from collections.abc import Callable, Generator, Sequence
+from email.utils import formatdate
 from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 
 from .. import read_repository
 from ..database import CatalogueDB
 from ..postgres import PostgresCatalogueDB, initialize_postgres, resolve_postgres_dsn
+from ..ratings import delete_user_rating, upsert_user_rating
 from ..search import get_book_stats, search_books_with_authors
 
 app = FastAPI(title="pdf-craft catalogue", version="0.1.0")
@@ -27,7 +28,7 @@ app.add_middleware(
         "http://localhost:4173",
         "http://127.0.0.1:4173",
     ],
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
     allow_credentials=False,
 )
@@ -36,6 +37,8 @@ _backend_kind: str | None = None
 _db_path: Path | None = None
 _postgres_dsn: str | None = None
 _content_root: Path | None = None
+_asset_root: Path | None = None
+_auth_resolver: Callable[[Request], str | None] | None = None
 
 
 def get_db() -> Generator[CatalogueDB | PostgresCatalogueDB, None, None]:
@@ -56,7 +59,7 @@ def get_sqlite_db() -> Generator[CatalogueDB, None, None]:
     if _backend_kind != "sqlite" or _db_path is None:
         raise HTTPException(
             status_code=503,
-            detail="/v1 requires an SQLite backend; PostgreSQL supports normalized /v2 reads only",
+            detail="/v1 requires an SQLite backend; use normalized /v2 endpoints with PostgreSQL",
         )
     db = CatalogueDB.connect(_db_path)
     try:
@@ -71,9 +74,11 @@ def init_app(
     *,
     postgres_dsn: str | None = None,
     content_root: str | Path | None = None,
+    asset_root: str | Path | None = None,
+    auth_resolver: Callable[[Request], str | None] | None = None,
 ) -> FastAPI:
     """Configure explicit SQLite or PostgreSQL request-scoped connections."""
-    global _backend_kind, _db_path, _postgres_dsn, _content_root
+    global _backend_kind, _db_path, _postgres_dsn, _content_root, _asset_root, _auth_resolver
     if postgres_dsn is None and isinstance(db_path, str) and db_path.startswith(("postgres://", "postgresql://")):
         postgres_dsn = db_path
         db_path = None
@@ -98,11 +103,14 @@ def init_app(
         )
     configured_root = content_root if content_root is not None else os.environ.get("CATALOGUE_CONTENT_ROOT")
     _content_root = Path(configured_root).expanduser().resolve() if configured_root else None
+    configured_asset_root = asset_root if asset_root is not None else os.environ.get("CATALOGUE_ASSET_ROOT")
+    _asset_root = Path(configured_asset_root).expanduser().resolve() if configured_asset_root else None
+    _auth_resolver = auth_resolver
     if cors_origins is not None:
         app.add_middleware(
             CORSMiddleware,
             allow_origins=list(cors_origins),
-            allow_methods=["GET", "POST", "OPTIONS"],
+            allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
             allow_headers=["*"],
             allow_credentials=False,
         )
@@ -165,6 +173,7 @@ def _content_response(
     *,
     download: bool,
     head: bool,
+    nosniff: bool = False,
 ) -> Response:
     size = path.stat().st_size
     try:
@@ -176,13 +185,16 @@ def _content_response(
         )
     assert start is not None and end is not None
     length = end - start + 1
+    etag_value = document.get("sha256") or f"asset-{document.get('id', 'content')}-{path.stat().st_mtime_ns}"
     headers = {
         "Accept-Ranges": "bytes",
         "Content-Length": str(length),
         "Content-Range": f"bytes {start}-{end}/{size}" if request.headers.get("range") else "",
-        "ETag": f'"{document["sha256"]}"',
+        "ETag": f'"{etag_value}"',
         "Last-Modified": formatdate(path.stat().st_mtime, usegmt=True),
     }
+    if nosniff:
+        headers["X-Content-Type-Options"] = "nosniff"
     if not headers["Content-Range"]:
         del headers["Content-Range"]
     if download:
@@ -322,6 +334,7 @@ class NormalizedWorkResponse(BaseModel):
     identifiers: list[dict]
     editions: list[dict]
     sources: list[str]
+    ratings: dict
 
 
 class NormalizedEditionResponse(BaseModel):
@@ -373,8 +386,35 @@ class NormalizedStatsResponse(BaseModel):
     source_coverage: list[dict]
 
 
-# Normalized v2 is intentionally read-only.  The repository is passed a fresh
-# connection for every request, leaving the database implementation replaceable.
+class CommunityRatingResponse(BaseModel):
+    average: float | None = None
+    count: int
+    user_rating: int | None = None
+
+
+class ExternalRatingResponse(BaseModel):
+    provider: str
+    rating_value: float | None = None
+    scale_max: float
+    rating_count: int | None = None
+    review_count: int | None = None
+    source_url: str | None = None
+    status: str
+    reason: str | None = None
+
+
+class WorkRatingsResponse(BaseModel):
+    work_id: int
+    community: CommunityRatingResponse
+    external: list[ExternalRatingResponse]
+
+
+class UserRatingUpdate(BaseModel):
+    rating: int = Field(..., ge=1, le=5)
+
+
+# Normalized v2 uses a fresh connection for every request, leaving the database
+# implementation replaceable while keeping the rating write boundary explicit.
 @app.get("/v2/health")
 def normalized_health(db: CatalogueDB | PostgresCatalogueDB = Depends(get_db)) -> dict[str, str]:
     db.conn.execute("SELECT 1")
@@ -411,6 +451,73 @@ def normalized_work(work_id: int, db: CatalogueDB | PostgresCatalogueDB = Depend
     if row is None:
         raise HTTPException(status_code=404, detail="Work not found")
     return NormalizedWorkResponse(**row)
+
+
+def _current_subject(request: Request) -> str:
+    if _auth_resolver is None:
+        raise HTTPException(status_code=401, detail="Authentication is not configured")
+    try:
+        subject = _auth_resolver(request)
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="Authentication failed") from exc
+    if subject is None or not str(subject).strip():
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return str(subject).strip()
+
+
+@app.get("/v2/works/{work_id}/ratings", response_model=WorkRatingsResponse)
+def normalized_work_ratings(
+    work_id: int,
+    request: Request,
+    db: CatalogueDB | PostgresCatalogueDB = Depends(get_db),
+) -> WorkRatingsResponse:
+    if not read_repository.work_exists(db.conn, work_id):
+        raise HTTPException(status_code=404, detail="Work not found")
+    subject: str | None = None
+    if _auth_resolver is not None:
+        try:
+            resolved = _auth_resolver(request)
+            subject = str(resolved).strip() if resolved is not None and str(resolved).strip() else None
+        except Exception:  # noqa: BLE001 - auth adapters must not break public reads
+            subject = None
+    return WorkRatingsResponse(**read_repository.get_ratings(db.conn, work_id, subject))
+
+
+@app.put("/v2/works/{work_id}/rating", response_model=WorkRatingsResponse)
+def put_work_rating(
+    work_id: int,
+    data: UserRatingUpdate,
+    request: Request,
+    db: CatalogueDB | PostgresCatalogueDB = Depends(get_db),
+) -> WorkRatingsResponse:
+    subject = _current_subject(request)
+    if not read_repository.work_exists(db.conn, work_id):
+        raise HTTPException(status_code=404, detail="Work not found")
+    try:
+        upsert_user_rating(db.conn, work_id, subject, data.rating)
+        db.conn.commit()
+    except Exception:
+        db.conn.rollback()
+        raise
+    return WorkRatingsResponse(**read_repository.get_ratings(db.conn, work_id, subject))
+
+
+@app.delete("/v2/works/{work_id}/rating", response_model=WorkRatingsResponse)
+def remove_work_rating(
+    work_id: int,
+    request: Request,
+    db: CatalogueDB | PostgresCatalogueDB = Depends(get_db),
+) -> WorkRatingsResponse:
+    subject = _current_subject(request)
+    if not read_repository.work_exists(db.conn, work_id):
+        raise HTTPException(status_code=404, detail="Work not found")
+    try:
+        delete_user_rating(db.conn, work_id, subject)
+        db.conn.commit()
+    except Exception:
+        db.conn.rollback()
+        raise
+    return WorkRatingsResponse(**read_repository.get_ratings(db.conn, work_id, subject))
 
 
 @app.get("/v2/editions/{edition_id}", response_model=NormalizedEditionResponse)
@@ -471,6 +578,60 @@ def normalized_asset(asset_id: int, db: CatalogueDB | PostgresCatalogueDB = Depe
     if row is None:
         raise HTTPException(status_code=404, detail="Asset not found")
     return NormalizedAsset(**row)
+
+
+_RASTER_MIME_TYPES = frozenset({
+    "image/bmp", "image/gif", "image/jpeg", "image/png", "image/tiff", "image/webp",
+})
+
+
+def _asset_content_path(asset: dict, asset_root: Path) -> tuple[Path, str] | None:
+    if not asset.get("is_selected") or asset.get("asset_type") != "cover":
+        return None
+    storage_uri = asset.get("storage_uri")
+    if not isinstance(storage_uri, str) or not storage_uri or storage_uri.startswith("remote:"):
+        return None
+    mime_type = str(asset.get("mime_type") or mimetypes.guess_type(storage_uri)[0] or "").lower()
+    if mime_type not in _RASTER_MIME_TYPES:
+        return None
+    try:
+        root = asset_root.resolve()
+        candidate = Path(storage_uri)
+        if not candidate.is_absolute():
+            candidate = root / candidate
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(root)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if not resolved.is_file():
+        return None
+    return resolved, mime_type
+
+
+@app.api_route("/v2/assets/{asset_id}/content", methods=["GET", "HEAD"])
+def asset_content(
+    asset_id: int,
+    request: Request,
+    db: CatalogueDB | PostgresCatalogueDB = Depends(get_db),
+) -> Response:
+    if _asset_root is None:
+        raise HTTPException(status_code=503, detail="Asset content delivery is not configured")
+    asset = read_repository.get_asset(db.conn, asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    resolved = _asset_content_path(asset, _asset_root)
+    if resolved is None:
+        raise HTTPException(status_code=404, detail="Asset content is unavailable")
+    path, mime_type = resolved
+    response_asset = {**asset, "media_type": mime_type}
+    return _content_response(
+        response_asset,
+        path,
+        request,
+        download=False,
+        head=request.method == "HEAD",
+        nosniff=True,
+    )
 
 
 # ── Endpoints ──────────────────────────────────────────────────────

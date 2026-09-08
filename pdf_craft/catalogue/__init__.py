@@ -55,6 +55,13 @@ from .postgres import (
     postgres_status,
     resolve_postgres_dsn,
 )
+from .ratings import (
+    community_rating,
+    delete_user_rating,
+    get_user_rating,
+    materialize_external_ratings,
+    upsert_user_rating,
+)
 from .resolution import accept_match, generate_candidates, reject_match, review_match
 from .schema import get_db_connection, initialize_database
 from .search import (
@@ -91,7 +98,9 @@ __all__ = [
     "Subject",
     "User",
     "accept_match",
+    "community_rating",
     "cover_url",
+    "delete_user_rating",
     "fetch_remote_cover",
     "file_sha256",
     "find_best_match",
@@ -99,6 +108,7 @@ __all__ = [
     "generate_candidates",
     "get_book_stats",
     "get_db_connection",
+    "get_user_rating",
     "ingest_local_documents",
     "initialize_database",
     "initialize_postgres",
@@ -106,6 +116,7 @@ __all__ = [
     "iter_local_documents",
     "iter_local_files",
     "match_book",
+    "materialize_external_ratings",
     "materialize_source_records",
     "normalize_bengali",
     "normalize_isbn",
@@ -125,4 +136,5 @@ __all__ = [
     "search_open_library",
     "select_cover",
     "stage_open_library_dump",
+    "upsert_user_rating",
 ]

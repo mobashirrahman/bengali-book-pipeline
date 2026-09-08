@@ -41,6 +41,8 @@ TRANSFER_TABLES = (
     TransferTable("catalogue_metadata_assertions", ("id", "entity_type", "entity_id", "field_name", "value_json", "source_record_id", "confidence", "status", "observed_at", "accepted_at"), ("id",)),
     TransferTable("catalogue_document_matches", ("id", "document_id", "edition_id", "score", "method", "status", "evidence_json", "reviewed_at", "reviewer", "review_reason"), ("id",)),
     TransferTable("catalogue_source_record_editions", ("source_record_id", "edition_id"), ("source_record_id",)),
+    TransferTable("catalogue_external_ratings", ("id", "provider", "edition_id", "source_record_id", "external_id", "value", "scale", "rating_count", "review_count", "source_url", "observed_at", "retrieved_at", "metadata_json"), ("id",)),
+    TransferTable("catalogue_user_ratings", ("id", "work_id", "user_subject", "rating", "created_at", "updated_at"), ("id",)),
     TransferTable("catalogue_snapshot_provenance", ("snapshot_id", "import_run_id", "request_json", "parser_version", "recorded_at"), ("snapshot_id", "import_run_id")),
     TransferTable("catalogue_assets", ("id", "edition_id", "document_id", "asset_type", "storage_uri", "sha256", "mime_type", "width", "height", "source_record_id", "attribution", "rights", "is_selected", "created_at", "source_url", "status", "rank_score", "selection_method", "selected_at", "selected_by", "retrieved_at", "metadata_json"), ("id",)),
     TransferTable("catalogue_artifacts", ("id", "document_id", "kind", "storage_uri", "sha256", "profile", "created_at"), ("id",)),
