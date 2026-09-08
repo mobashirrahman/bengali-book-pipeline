@@ -6,6 +6,7 @@ import json
 import zipfile
 from pathlib import Path
 
+import pytest
 from pypdf import PdfWriter
 
 from pdf_craft.catalogue import metadata_embed as embed
@@ -177,6 +178,87 @@ def test_pdf_embedding_preserves_outlines_and_pages(tmp_path: Path) -> None:
     assert result["authors"] == ["New Author"]
     # The source keeps its old metadata and structure.
     assert extract_pdf_metadata(src)["title"] == "Old Title"
+
+
+def test_pdf_incremental_output_appends_to_source_bytes(tmp_path: Path) -> None:
+    src = _write_pdf(tmp_path / "scan.pdf")
+    staged = tmp_path / "staged.pdf"
+    embed.embed_pdf_metadata(src, staged, "Shesher Kabita", ["Rabindranath Tagore"])
+    source_bytes = src.read_bytes()
+    staged_bytes = staged.read_bytes()
+    # Incremental, not a rewrite: the source survives byte-identical up
+    # front and the update is a small append (title + author objects).
+    assert staged_bytes[:len(source_bytes)] == source_bytes
+    assert 0 < len(staged_bytes) - len(source_bytes) < 4096
+    result = extract_pdf_metadata(staged)
+    assert result["title"] == "Shesher Kabita"
+    assert result["authors"] == ["Rabindranath Tagore"]
+
+
+def test_pdf_embed_rejects_encrypted(tmp_path: Path) -> None:
+    src = tmp_path / "encrypted.pdf"
+    writer = PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    writer.encrypt(user_password="secret")
+    with src.open("wb") as stream:
+        writer.write(stream)
+    with pytest.raises(ValueError, match="encrypted"):
+        embed.embed_pdf_metadata(src, tmp_path / "staged.pdf", "Title", ["Author"])
+
+
+def test_pdf_embed_rejects_same_source_and_dest(tmp_path: Path) -> None:
+    src = _write_pdf(tmp_path / "scan.pdf")
+    before = src.read_bytes()
+    with pytest.raises(ValueError, match="same file"):
+        embed.embed_pdf_metadata(src, src, "Title", ["Author"])
+    # A different spelling of the same path is still the same file.
+    alias = tmp_path / "sub" / ".." / "scan.pdf"
+    with pytest.raises(ValueError, match="same file"):
+        embed.embed_pdf_metadata(src, alias, "Title", ["Author"])
+    assert src.read_bytes() == before
+
+
+def test_pdf_embed_preserves_existing_info(tmp_path: Path) -> None:
+    from pypdf import PdfReader
+
+    src = tmp_path / "scan.pdf"
+    writer = PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    writer.add_metadata({"/Title": "Old Title", "/Producer": "Scanner 3000",
+                         "/Creator": "scan-tool"})
+    with src.open("wb") as stream:
+        writer.write(stream)
+    staged = tmp_path / "staged.pdf"
+    embed.embed_pdf_metadata(src, staged, "New Title", ["New Author"])
+    info = PdfReader(str(staged)).metadata
+    assert info.title == "New Title"
+    assert info.author == "New Author"
+    assert info.producer == "Scanner 3000"
+    assert info.creator == "scan-tool"
+
+
+def test_pdf_embed_publishes_atomically_without_leftovers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import pypdf
+
+    src = _write_pdf(tmp_path / "scan.pdf")
+    before = src.read_bytes()
+    staged = tmp_path / "staging" / "staged.pdf"
+    embed.embed_pdf_metadata(src, staged, "Title", ["Author"])
+    assert staged.is_file()
+    assert list(tmp_path.glob("**/*.tmp")) == []
+
+    def _fail(self, stream):
+        raise OSError("disk on fire")
+
+    monkeypatch.setattr(pypdf.PdfWriter, "write", _fail)
+    with pytest.raises(OSError, match="disk on fire"):
+        embed.embed_pdf_metadata(src, tmp_path / "staging" / "other.pdf", "T", ["A"])
+    # Neither a partial destination nor the temp file may survive.
+    assert not (tmp_path / "staging" / "other.pdf").exists()
+    assert list(tmp_path.glob("**/*.tmp")) == []
+    assert src.read_bytes() == before  # source untouched
 
 
 def test_epub_rewrite_stays_valid(tmp_path: Path) -> None:

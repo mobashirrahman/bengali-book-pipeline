@@ -52,28 +52,55 @@ def embed_pdf_metadata(
 ) -> None:
     """Copy *source* to *dest* with ``/Title``/``/Author`` set.
 
-    The document structure is cloned (``/Root`` with outlines, AcroForm,
-    page labels and the XMP metadata stream, plus ``/ID``), so only the
-    two ``/Info`` fields are replaced and everything else survives.
+    The write is incremental: the staged file is the source bytes plus
+    an appended update, so malformed scans are never fully re-parsed or
+    re-serialized and every structure (outlines, forms, page labels,
+    XMP stream) survives byte-identical.  The existing ``/Info``
+    dictionary is carried over with only the two fields replaced.
+    The source is never opened for writing, and the destination is
+    published atomically via a sibling temporary file.
     """
     from pypdf import PdfReader, PdfWriter
 
-    reader = PdfReader(str(source))
-    if reader.is_encrypted:
-        raise ValueError(f"encrypted PDF: {source}")
-    writer = PdfWriter()
-    writer.clone_document_from_reader(reader)
-    info = dict(reader.metadata or {})
+    target = Path(dest)
+    if target.resolve() == Path(source).resolve():
+        raise ValueError(f"source and destination are the same file: {source}")
+    with open(source, "rb") as read_only:
+        probe = PdfReader(read_only)
+        if probe.is_encrypted:
+            raise ValueError(f"encrypted PDF: {source}")
+        existing = (
+            {str(key): str(value) for key, value in dict(probe.metadata or {}).items()}
+        )
+    info = dict(existing)
     if title:
         info["/Title"] = title
     if authors:
         info["/Author"] = "; ".join(authors)
+    writer = PdfWriter(str(source), incremental=True)
     if info:
         writer.add_metadata(info)
-    target = Path(dest)
     target.parent.mkdir(parents=True, exist_ok=True)
-    with open(target, "wb") as stream:
-        writer.write(stream)
+    fd, tmp_name = tempfile.mkstemp(
+        dir=str(target.parent), prefix=target.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            writer.write(stream)
+        os.replace(tmp_name, target)
+    except BaseException:
+        # Remove only the temp file this call created: it lives in the
+        # destination directory under the unique mkstemp name, so anything
+        # else at that path is not ours to delete.  After a successful
+        # replace the temp name is gone and this is a no-op.
+        try:
+            candidate = Path(tmp_name)
+            if (candidate.parent == target.parent
+                    and candidate.name.startswith(target.name + ".")
+                    and candidate.is_file()):
+                candidate.unlink()
+        except OSError:
+            pass
+        raise
 
 
 def _opf_namespaces(opf_data: bytes) -> dict[str, str]:
