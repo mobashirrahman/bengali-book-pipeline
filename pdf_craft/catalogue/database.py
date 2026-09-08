@@ -82,8 +82,14 @@ class CatalogueDB:
 
     @staticmethod
     def open_connection(db_path: str | Path) -> sqlite3.Connection:
-        """Open an already initialized database with request-safe settings."""
-        conn = sqlite3.connect(str(db_path))
+        """Open an already initialized database with request-safe settings.
+
+        Each request owns its connection: FastAPI may create, use, and close
+        it on different worker threads, so thread affinity is disabled here.
+        A request connection must never be shared across threads concurrently
+        or stored globally; open one connection per request instead.
+        """
+        conn = sqlite3.connect(str(db_path), check_same_thread=False)
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA busy_timeout=5000")
         conn.execute("PRAGMA journal_mode=WAL")

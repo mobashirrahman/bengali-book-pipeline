@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+import threading
 from pathlib import Path
 
 import pytest
@@ -277,6 +278,74 @@ class TestReadingProgress:
         fetched2 = db.get_reading_progress(user_id, book_id)
         assert fetched2 is not None
         assert fetched2.position == "chapter:6:0"
+
+
+class TestRequestConnections:
+    def test_request_connection_create_use_close_on_distinct_threads(
+        self, db_path: Path
+    ) -> None:
+        """Request connections must survive FastAPI's thread handoffs.
+
+        The dependency creates the connection, the handler uses it, and the
+        cleanup closes it, each potentially on a different worker thread. The
+        owning thread stays alive throughout so the other threads are
+        guaranteed distinct thread identities (sequential threads alone may
+        recycle identities and hide affinity errors).
+        """
+        CatalogueDB(db_path).close()
+        box: dict[str, object] = {}
+        errors: list[BaseException] = []
+        created = threading.Event()
+        release = threading.Event()
+
+        def run_on_new_thread(func: object) -> None:
+            def target() -> None:
+                try:
+                    assert callable(func)
+                    func()
+                except BaseException as exc:  # noqa: BLE001
+                    errors.append(exc)
+
+            thread = threading.Thread(target=target)
+            thread.start()
+            thread.join(timeout=30)
+            assert not thread.is_alive(), "request worker thread did not finish"
+
+        def owner() -> None:
+            try:
+                box["db"] = CatalogueDB.connect(db_path)
+            except BaseException as exc:  # noqa: BLE001
+                errors.append(exc)
+            finally:
+                created.set()
+            assert release.wait(timeout=30), "owner thread was never released"
+
+        def use() -> None:
+            db = box["db"]
+            assert isinstance(db, CatalogueDB)
+            row = db.conn.execute("SELECT 1").fetchone()
+            assert row[0] == 1
+            book_id = db.create_book(Book(title="Threaded"))
+            assert db.get_book(book_id) is not None
+
+        def close() -> None:
+            db = box["db"]
+            assert isinstance(db, CatalogueDB)
+            db.close()
+
+        owner_thread = threading.Thread(target=owner)
+        owner_thread.start()
+        try:
+            assert created.wait(timeout=30), "owner thread did not create the request connection"
+            run_on_new_thread(use)
+            run_on_new_thread(close)
+        finally:
+            release.set()
+            owner_thread.join(timeout=30)
+            assert not owner_thread.is_alive(), "owner thread did not exit after release"
+        assert errors == []
+        with CatalogueDB(db_path) as verify:
+            assert verify.count_books() == 1
 
 
 class TestFavorites:

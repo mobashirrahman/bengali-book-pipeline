@@ -1,5 +1,6 @@
 import base64
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -69,6 +70,38 @@ def test_v2_requests_use_independent_connections(tmp_path: Path) -> None:
     first = client.get("/v2/health")
     second = client.get("/v2/health")
     assert first.status_code == second.status_code == 200
+
+
+def test_v2_startup_endpoints_serve_concurrent_requests(tmp_path: Path) -> None:
+    """Mirror browser startup: concurrent health/works/stats must not 500.
+
+    Smoke coverage for independent concurrent requests and response data
+    only; the deterministic thread-handoff regression lives in
+    TestRequestConnections in test_database.py.
+    """
+    _database(tmp_path / "catalogue.db")
+    app = init_app(tmp_path / "catalogue.db")
+
+    def fetch(path: str, params: dict[str, int] | None = None) -> tuple[int, object]:
+        response = TestClient(app).get(path, params=params)
+        return response.status_code, response.json()
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        health_future = pool.submit(fetch, "/v2/health")
+        works_future = pool.submit(fetch, "/v2/works", {"limit": 24})
+        stats_future = pool.submit(fetch, "/v2/stats")
+        health_status, health = health_future.result(timeout=60)
+        works_status, works = works_future.result(timeout=60)
+        stats_status, stats = stats_future.result(timeout=60)
+
+    assert health_status == 200
+    assert health == {"status": "ok", "backend": "sqlite"}
+    assert works_status == 200
+    assert isinstance(works, list)
+    assert works[0]["title"] == "Alpha Work"
+    assert stats_status == 200
+    assert isinstance(stats, dict)
+    assert stats["works"] == 1
 
 
 def test_v2_document_content_supports_head_ranges_and_downloads(tmp_path: Path) -> None:

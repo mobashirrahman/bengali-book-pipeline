@@ -4,21 +4,41 @@ This directory contains the React + TypeScript + Vite frontend for the Folio boo
 
 ## Run locally
 
+Start the catalogue API first, from the repository root, using the existing
+normalized database and the approved `epub-staging` content root:
+
+```bash
+.venv/bin/python -m pdf_craft.catalogue.cli serve \
+  --db pdf-craft-output/catalogue/catalogue.db \
+  --content-root pdf-craft-output/catalogue/epub-staging \
+  --host 127.0.0.1 --port 8000
+```
+
+Then start the frontend:
+
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
 
-The development preview is available at `http://localhost:5173/`. It is bound to
-loopback (`127.0.0.1`) and is intentionally not reachable from other machines.
-The current workspace preview is already running on port 5173.
+The development server is available at `http://127.0.0.1:5173/`. It binds
+explicitly to loopback (`127.0.0.1`) on port `5173` with `strictPort`, and is
+intentionally not reachable from other machines. `vite preview` uses the same
+loopback binding on port `4173` with `strictPort`.
 
-The app calls the normalized catalogue at the same origin by default. Set `VITE_API_BASE_URL` when the API is on another origin:
+The app calls the normalized catalogue at the same origin by default, and the
+dev (and preview) server proxies only `/v2` requests to the local API at
+`http://127.0.0.1:8000`. For local usage, leave `VITE_API_BASE_URL` unset so
+requests go through that proxy, and make sure `VITE_DEMO_MODE` is not `true`
+so the app uses live catalogue data instead of the deterministic demo set.
 
-```bash
-VITE_API_BASE_URL=http://127.0.0.1:8000 npm run dev
-```
+For remote access, forward only the frontend port (5173) over SSH; keep both
+listeners on loopback and do not assume port 8000 is forwarded. The default
+local invocation is plain `npm run dev` with the override unset. Setting an
+absolute browser-facing `VITE_API_BASE_URL` is an advanced override: it
+bypasses the local proxy, so the endpoint must be separately reachable from
+the browser and must list the frontend origin in its CORS configuration.
 
 To preview the deterministic local catalogue without making an API request, use `VITE_DEMO_MODE=true`. If the health check or initial catalogue request fails, the app switches to the same explicit demo mode and shows the reason in the status banner. Demo records are labeled as demo records throughout the UI.
 
