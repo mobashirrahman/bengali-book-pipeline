@@ -7,6 +7,8 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from rapidfuzz import fuzz
+
 from .database import CatalogueDB
 from .isbn import normalize_isbn
 from .matching import (
@@ -45,8 +47,7 @@ def generate_candidates(db: CatalogueDB, document_id: int) -> list[int]:
     author_keys = {_normalized_name(author) for author in local_authors if _normalized_name(author)}
     exact_isbn_ids = _ids_by_isbn(db, local_isbns)
     title_ids = _ids_by_title(db, title_key, local_title)
-    author_ids = _ids_by_authors(db, author_keys)
-    exact_ids = list(dict.fromkeys(exact_isbn_ids + title_ids + author_ids))
+    exact_ids = list(dict.fromkeys(exact_isbn_ids + title_ids))
     canonical = _load_canonical_editions(db, exact_ids)
     candidates: list[int] = []
     selected: set[int] = set()
@@ -81,21 +82,6 @@ def generate_candidates(db: CatalogueDB, document_id: int) -> list[int]:
         ))
         selected.add(edition_id)
 
-    for edition_id in author_ids:
-        item = canonical.get(edition_id)
-        if item is None or edition_id in selected:
-            continue
-        candidates.append(_persist_candidate(
-            db, document_id, edition_id, 0.2, "exact_author",
-            {
-                "matcher_version": MATCHER_VERSION,
-                "signals": ["exact_author"],
-                "title_score": 0.0,
-                "author_score": 1.0,
-            },
-        ))
-        selected.add(edition_id)
-
     fuzzy_ids = _fuzzy_pool_ids(db, title_key, author_keys, selected, local_title)
     fuzzy_candidates = _load_canonical_editions(db, fuzzy_ids)
     scored: list[tuple[float, int, dict[str, object]]] = []
@@ -104,16 +90,27 @@ def generate_candidates(db: CatalogueDB, document_id: int) -> list[int]:
         if item is None:
             continue
         candidate_author = " | ".join(item.authors)
-        title_score = fuzzy_match_score(local_title, item.title)
+        title_score = _title_similarity(local_title, item.title)
         author_score = fuzzy_match_score(" | ".join(local_authors), candidate_author) if local_authors and candidate_author else 0.0
         score = 0.8 * title_score + 0.2 * author_score
+        volume_relation = _volume_relation(local_title, item.title)
+        if volume_relation == "mismatch":
+            score -= 0.25
+        elif volume_relation == "missing":
+            score -= 0.10
         if title_score < 0.55 or (local_authors and candidate_author and author_score < 0.4):
             continue
+        if score < 0.55:
+            continue
+        signals = ["fuzzy_title_author" if local_authors and candidate_author else "fuzzy_title"]
+        if volume_relation in {"match", "mismatch", "missing"}:
+            signals.append("volume_" + volume_relation)
         scored.append((score, edition_id, {
             "matcher_version": MATCHER_VERSION,
-            "signals": ["fuzzy_title_author" if local_authors and candidate_author else "fuzzy_title"],
+            "signals": signals,
             "title_score": title_score,
             "author_score": author_score,
+            "volume_relation": volume_relation,
         }))
     for score, edition_id, evidence in sorted(scored, key=lambda value: (-value[0], value[1]))[:_FUZZY_PERSIST_LIMIT]:
         candidates.append(_persist_candidate(db, document_id, edition_id, score, "fuzzy", evidence))
@@ -218,6 +215,12 @@ def _fuzzy_pool_ids(
         (_glob_prefix(title_prefix), _FUZZY_POOL_LIMIT),
     ).fetchall()
     ids = sorted({int(row[0]) for row in (*work_rows, *title_rows)})
+    if len(ids) < _FUZZY_POOL_LIMIT and author_keys:
+        ids.extend(
+            edition_id
+            for edition_id in _ids_by_authors(db, author_keys)
+            if edition_id not in selected and edition_id not in ids
+        )
     return [edition_id for edition_id in ids if edition_id not in selected][:_FUZZY_POOL_LIMIT]
 
 
@@ -238,27 +241,35 @@ def _load_canonical_editions(db: CatalogueDB, edition_ids: list[int]) -> dict[in
            WHERE e.id IN (""" + placeholders + ")""",
         tuple(edition_ids),
     ).fetchall()
+    people_sql = (
+        "SELECT ep.edition_id, p.name, p.normalized_name "
+        "FROM catalogue_edition_people ep "
+        "JOIN catalogue_people p ON p.id=ep.person_id "
+        "WHERE ep.edition_id IN (" + placeholders + ") "
+        "AND ep.role='author' ORDER BY ep.edition_id, ep.position, p.id"
+    )
+    people_rows = db.conn.execute(people_sql, tuple(edition_ids)).fetchall()
+    people_by_edition: dict[int, list[tuple[str, str]]] = {}
+    for person in people_rows:
+        people_by_edition.setdefault(int(person[0]), []).append((str(person[1]), str(person[2])))
+    identifier_sql = (
+        "SELECT entity_id, normalized_value FROM catalogue_identifiers "
+        "WHERE entity_type='edition' AND namespace='isbn' "
+        "AND entity_id IN (" + placeholders + ")"
+    )
+    identifier_rows = db.conn.execute(identifier_sql, tuple(edition_ids)).fetchall()
+    identifiers_by_edition: dict[int, list[str]] = {}
+    for identifier in identifier_rows:
+        identifiers_by_edition.setdefault(int(identifier[0]), []).append(str(identifier[1]))
     output: dict[int, _CanonicalEdition] = {}
     for row in rows:
         edition_id = int(row[0])
-        people = db.conn.execute(
-            """SELECT p.name, p.normalized_name
-               FROM catalogue_edition_people ep
-               JOIN catalogue_people p ON p.id=ep.person_id
-               WHERE ep.edition_id=? AND ep.role='author'
-               ORDER BY ep.position, p.id""",
-            (edition_id,),
-        ).fetchall()
-        identifiers = db.conn.execute(
-            """SELECT normalized_value FROM catalogue_identifiers
-               WHERE entity_type='edition' AND entity_id=? AND namespace='isbn'""",
-            (edition_id,),
-        ).fetchall()
-        authors = tuple(str(person[0]) for person in people)
-        normalized_authors = tuple(str(person[1]) for person in people)
+        people = people_by_edition.get(edition_id, [])
+        authors = tuple(person[0] for person in people)
+        normalized_authors = tuple(person[1] for person in people)
         output[edition_id] = _CanonicalEdition(
             edition_id, str(row[1] or row[2] or ""), authors, normalized_authors,
-            tuple(str(identifier[0]) for identifier in identifiers),
+            tuple(identifiers_by_edition.get(edition_id, [])),
         )
     return output
 
@@ -288,6 +299,34 @@ def _persist_candidate(
 
 def _normalized_name(value: object) -> str:
     return re.sub(r"\s+", " ", normalize_bengali(str(value or "")).strip()).lower()
+
+
+def _title_similarity(query: str, candidate: str) -> float:
+    """Avoid maxing a partial score when one title is only a short fragment."""
+    query_key = _normalized_name(query)
+    candidate_key = _normalized_name(candidate)
+    if not query_key or not candidate_key:
+        return 0.0
+    if min(len(query_key), len(candidate_key)) / max(len(query_key), len(candidate_key)) < 0.7:
+        return fuzz.token_sort_ratio(query_key, candidate_key) / 100.0
+    return fuzzy_match_score(query_key, candidate_key)
+
+
+def _volume_relation(query: str, candidate: str) -> str | None:
+    """Compare explicit small volume numbers without guessing arbitrary digits."""
+    query_volume = _volume_number(query)
+    candidate_volume = _volume_number(candidate)
+    if query_volume is None and candidate_volume is None:
+        return None
+    if query_volume is None or candidate_volume is None:
+        return "missing"
+    return "match" if query_volume == candidate_volume else "mismatch"
+
+
+def _volume_number(title: str) -> int | None:
+    translated = title.translate(str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789"))
+    numbers = [int(value) for value in re.findall(r"(?<!\d)(\d{1,2})(?!\d)", translated)]
+    return numbers[-1] if numbers and numbers[-1] <= 99 else None
 
 
 def _text(value: object) -> str | None:

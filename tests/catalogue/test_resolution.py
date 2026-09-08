@@ -8,7 +8,13 @@ from pdf_craft.catalogue.importers.google_books import stage_google_books_respon
 from pdf_craft.catalogue.isbn import normalize_isbn, normalize_isbn10
 from pdf_craft.catalogue.matching import normalize_bengali, title_sort_key
 from pdf_craft.catalogue.materialization import materialize_source_records
-from pdf_craft.catalogue.resolution import MATCHER_VERSION, accept_match, reject_match
+from pdf_craft.catalogue.resolution import (
+    MATCHER_VERSION,
+    _title_similarity,
+    _volume_relation,
+    accept_match,
+    reject_match,
+)
 
 
 def test_isbn_validation_supports_x_and_rejects_bad_checksums() -> None:
@@ -201,3 +207,10 @@ def test_failed_import_run_reopens_and_preserves_checkpoint(tmp_path: Path) -> N
     assert retry.status == "running"
     assert db.conn.execute("SELECT status, completed_at FROM catalogue_import_runs WHERE id=?", (run.id,)).fetchone()[0] == "running"
     assert db.conn.execute("SELECT cursor FROM catalogue_import_checkpoints WHERE import_run_id=?", (run.id,)).fetchone()[0] == "4"
+
+
+def test_matcher_handles_volume_numbers_and_short_title_fragments() -> None:
+    assert _volume_relation("রচনাবলী। ১", "রচনাবলী-১") == "match"
+    assert _volume_relation("রচনাবলী। ১", "রচনাবলী-২") == "mismatch"
+    assert _volume_relation("রচনাবলী। ১", "রচনাবলী") == "missing"
+    assert _title_similarity("আহমদ শরীফ রচনাবলী। ১", "আহমদ শরীফ") < 0.8
