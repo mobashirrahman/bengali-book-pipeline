@@ -10,10 +10,9 @@ npm install
 npm run dev
 ```
 
-The development preview is available at `http://localhost:5173/` (or
-`http://134.96.234.10:5173/` from another machine on the same network while the
-Vite process is running). The current workspace preview is already running on
-port 5173.
+The development preview is available at `http://localhost:5173/`. It is bound to
+loopback (`127.0.0.1`) and is intentionally not reachable from other machines.
+The current workspace preview is already running on port 5173.
 
 The app calls the normalized catalogue at the same origin by default. Set `VITE_API_BASE_URL` when the API is on another origin:
 
