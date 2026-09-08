@@ -54,7 +54,9 @@ def parse_source_record(
     source_title = _text(value.get("title") or value.get("Title") or raw.get("name") or title)
     if source == "rokomari":
         specific_authors = _strings(value.get("Author/Editor")) + _strings(value.get("Author"))
-        authors = _unique_strings(specific_authors or _strings(raw.get("authors")) + _strings(value.get("authors")))
+        # The top-level `authors` key is the store's popular-authors sidebar,
+        # identical across product pages, not this book's credits.
+        authors = _unique_strings(specific_authors or _strings(value.get("authors")))
         publisher = _text(
             value.get("Publisher")
             or value.get("publisher")
@@ -220,6 +222,131 @@ def _materialize_dry_run(
         cursor = int(rows[-1]["id"])
 
 
+def repair_edition_people(
+    db: CatalogueDB, batch_size: int = 500, *, dry_run: bool = False,
+) -> dict[str, int]:
+    """Remove author rows the Rokomari sidebar fallback created.
+
+    Candidate editions are those mapped from a rokomari source record whose
+    re-parse yields no authors. The correct author set for each candidate is
+    the union over every source record mapped to that edition, so authors
+    contributed by other sources are preserved. Commits per batch; callers
+    pass dry_run to report counts without writing.
+    """
+    if batch_size < 1:
+        raise ValueError("batch_size must be positive")
+    report = {"editions_examined": 0, "people_rows_deleted": 0, "people_deleted": 0, "assertions_deleted": 0}
+    seen_editions: set[int] = set()
+    cursor = 0
+    try:
+        while True:
+            rows = db.conn.execute(
+                "SELECT id, source, external_id, title, raw_json FROM catalogue_source_records"
+                " WHERE source='rokomari' AND id>? ORDER BY id LIMIT ?",
+                (cursor, batch_size),
+            ).fetchall()
+            if not rows:
+                break
+            cursor = int(rows[-1]["id"])
+            for row in rows:
+                try:
+                    reparsed = parse_source_record(
+                        row["source"], json.loads(row["raw_json"]), row["title"], row["external_id"]
+                    )
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    continue
+                if reparsed.authors:
+                    continue
+                edition_rows = db.conn.execute(
+                    "SELECT edition_id FROM catalogue_source_record_editions WHERE source_record_id=?",
+                    (row["id"],),
+                ).fetchall()
+                for edition_row in edition_rows:
+                    edition_id = int(edition_row[0])
+                    if edition_id in seen_editions:
+                        continue
+                    seen_editions.add(edition_id)
+                    report["editions_examined"] += 1
+                    _repair_one_edition(db, edition_id, report)
+            if not dry_run:
+                db.conn.commit()
+        # Swept once, after every batch. Both statements scan a whole table
+        # (3.8M assertions, 76k people), and the result is identical to
+        # sweeping per batch, so doing it inside the loop cost 424 full scans.
+        _delete_orphan_person_rows(db, report)
+        if not dry_run:
+            db.conn.commit()
+    except Exception:
+        db.conn.rollback()
+        raise
+    # A dry run performs the deletes and rolls back only at the very end. It
+    # cannot roll back per batch: the orphan sweep runs last and can only see
+    # a person as orphaned once the rows referencing them are actually gone,
+    # so an earlier rollback would report people_deleted=0 for work a live run
+    # really does. Reporting the true numbers is worth the larger transaction.
+    if dry_run:
+        db.conn.rollback()
+    return report
+
+
+def _repair_one_edition(db: CatalogueDB, edition_id: int, report: dict[str, int]) -> None:
+    mapped = db.conn.execute(
+        "SELECT sr.source, sr.external_id, sr.title, sr.raw_json"
+        " FROM catalogue_source_record_editions sre"
+        " JOIN catalogue_source_records sr ON sr.id=sre.source_record_id"
+        " WHERE sre.edition_id=?",
+        (edition_id,),
+    ).fetchall()
+    keep: set[str] = set()
+    for source, external_id, title, raw_json in mapped:
+        try:
+            parsed = parse_source_record(source, json.loads(raw_json), title, external_id)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        keep.update(_normalize_person_name(name) for name in parsed.authors)
+    # Only author rows are in scope. The sidebar fallback could only ever
+    # create role='author', and the set recomputed above is an author set, so
+    # judging an editor, translator or illustrator row against it would delete
+    # a credit this bug never touched.
+    rows = db.conn.execute(
+        "SELECT ep.person_id, ep.role, p.name FROM catalogue_edition_people ep"
+        " JOIN catalogue_people p ON p.id=ep.person_id"
+        " WHERE ep.edition_id=? AND ep.role='author'"
+        " ORDER BY ep.position, ep.person_id, ep.role",
+        (edition_id,),
+    ).fetchall()
+    survivors = [(row[0], row[1]) for row in rows if _normalize_person_name(str(row[2])) in keep]
+    for row in rows:
+        if _normalize_person_name(str(row[2])) not in keep:
+            # The primary key is (edition_id, person_id, role), so the role has
+            # to be part of the delete. Keying on the person alone would drop
+            # every role that person holds on the edition -- today all rows are
+            # 'author', but an editor or translator row must not vanish with it.
+            deleted = db.conn.execute(
+                "DELETE FROM catalogue_edition_people WHERE edition_id=? AND person_id=? AND role=?",
+                (edition_id, row[0], row[1]),
+            )
+            report["people_rows_deleted"] += deleted.rowcount
+    for position, (person_id, role) in enumerate(survivors):
+        db.conn.execute(
+            "UPDATE catalogue_edition_people SET position=? WHERE edition_id=? AND person_id=? AND role=?",
+            (position, edition_id, person_id, role),
+        )
+
+
+def _delete_orphan_person_rows(db: CatalogueDB, report: dict[str, int]) -> None:
+    deleted_assertions = db.conn.execute(
+        "DELETE FROM catalogue_metadata_assertions WHERE entity_type='person'"
+        " AND NOT EXISTS (SELECT 1 FROM catalogue_edition_people WHERE person_id=catalogue_metadata_assertions.entity_id)"
+    )
+    report["assertions_deleted"] += deleted_assertions.rowcount
+    deleted_people = db.conn.execute(
+        "DELETE FROM catalogue_people"
+        " WHERE NOT EXISTS (SELECT 1 FROM catalogue_edition_people WHERE person_id=catalogue_people.id)"
+    )
+    report["people_deleted"] += deleted_people.rowcount
+
+
 def _materialize_one(db: CatalogueDB, source_record_id: int, item: NormalizedSource) -> int:
     conn = db.conn
     work_id = _get_work(conn, item)
@@ -275,8 +402,12 @@ def _get_edition(conn, item: NormalizedSource, work_id: int) -> int:
     return int(cur.lastrowid)
 
 
+def _normalize_person_name(name: str) -> str:
+    return re.sub(r"\s+", " ", normalize_bengali(name)).strip().lower()
+
+
 def _get_person(conn, name: str) -> int:
-    normalized = re.sub(r"\s+", " ", normalize_bengali(name)).strip().lower()
+    normalized = _normalize_person_name(name)
     row = conn.execute("SELECT id FROM catalogue_people WHERE normalized_name=?", (normalized,)).fetchone()
     if row:
         return int(row[0])

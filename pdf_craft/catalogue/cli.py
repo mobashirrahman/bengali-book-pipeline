@@ -115,6 +115,16 @@ def cmd_materialize_source(args: argparse.Namespace) -> None:
     db.close()
 
 
+def cmd_repair_people(args: argparse.Namespace) -> None:
+    from .materialization import repair_edition_people
+
+    db = CatalogueDB(args.db)
+    report = repair_edition_people(db, batch_size=args.batch_size, dry_run=args.dry_run)
+    status = "People repair (dry run): " if args.dry_run else "People repair: "
+    print(status + ", ".join(f"{key}={value}" for key, value in report.items()))
+    db.close()
+
+
 def cmd_materialize_ratings(args: argparse.Namespace) -> None:
     from .ratings import materialize_external_ratings
 
@@ -402,6 +412,14 @@ def main() -> None:
     p_materialize.add_argument("--batch-size", type=int, default=500)
     p_materialize.add_argument("--dry-run", action="store_true")
     p_materialize.set_defaults(func=cmd_materialize_source)
+
+    p_repair = sub.add_parser(
+        "repair-people", help="Remove Rokomari sidebar authors from edition people"
+    )
+    p_repair.add_argument("--db", default="catalogue.db")
+    p_repair.add_argument("--batch-size", type=int, default=500)
+    p_repair.add_argument("--dry-run", action="store_true")
+    p_repair.set_defaults(func=cmd_repair_people)
 
     p_ratings = sub.add_parser(
         "materialize-ratings", help="Materialize external ratings from staged source records"
