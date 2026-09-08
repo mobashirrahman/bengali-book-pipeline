@@ -231,8 +231,12 @@ def _image_info(data: bytes, mime: str | None = None) -> tuple[str, int, int]:
     declared = (mime or "").split(";", 1)[0].strip().lower()
     if declared and declared not in _IMAGE_MIMES:
         raise AssetError(f"unsupported image content type: {declared}")
-    if declared and declared != detected:
-        raise AssetError(f"image MIME does not match content: {declared} vs {detected}")
+    # A declared type that disagrees with the magic bytes is not a rejection.
+    # Origins mislabel images routinely -- this CDN serves PNG bytes as
+    # image/jpeg on ~17% of covers -- and the header is the untrustworthy half.
+    # The sniffed type is what gets stored, used for the file extension and
+    # sent back to the browser (with nosniff), so the declared value never
+    # reaches a client and cannot mislead one.
     return detected, width, height
 
 

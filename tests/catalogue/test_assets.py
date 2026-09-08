@@ -195,3 +195,39 @@ def test_webp_vp8_and_vp8l_dimensions_are_supported(tmp_path: Path) -> None:
     vp8 = register_local_bytes(db, edition, WEBP_VP8, tmp_path / "assets")
     assert (vp8l.width, vp8l.height) == (16, 32)
     assert (vp8.width, vp8.height) == (16, 32)
+
+
+def test_cover_trusts_sniffed_type_over_a_wrong_declared_type(tmp_path: Path) -> None:
+    """A mislabelled Content-Type must not reject an otherwise valid cover.
+
+    The origin CDN serves PNG bytes as image/jpeg on a large share of covers.
+    The sniffed type is authoritative: it is what gets stored, what picks the
+    file extension, and what is sent back to the browser (with nosniff), so the
+    declared value never reaches a client.
+    """
+    db = CatalogueDB(tmp_path / "db.sqlite")
+    edition = _edition(db)
+    candidate = register_remote_cover(db, edition, "https://cdn.example.com/cover.jpg")
+    transport = httpx.MockTransport(lambda request: httpx.Response(
+        200, headers={"content-type": "image/jpeg"}, content=HIGH_PNG))
+
+    result = fetch_remote_cover(
+        db, candidate.id, tmp_path / "assets", client=httpx.Client(transport=transport))
+
+    assert result.mime_type == "image/png"
+    assert result.status == "validated"
+    assert Path(result.storage_uri).suffix == ".png"
+    assert Path(result.storage_uri).read_bytes() == HIGH_PNG
+
+
+def test_cover_still_rejects_a_declared_type_that_is_not_an_image(tmp_path: Path) -> None:
+    """Only an image-shaped declared type is tolerated when it disagrees."""
+    db = CatalogueDB(tmp_path / "db.sqlite")
+    edition = _edition(db)
+    candidate = register_remote_cover(db, edition, "https://cdn.example.com/cover.jpg")
+    transport = httpx.MockTransport(lambda request: httpx.Response(
+        200, headers={"content-type": "text/html"}, content=HIGH_PNG))
+
+    with pytest.raises(AssetError, match="unsupported image content type"):
+        fetch_remote_cover(
+            db, candidate.id, tmp_path / "assets", client=httpx.Client(transport=transport))
