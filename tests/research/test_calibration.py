@@ -90,12 +90,59 @@ class FrozenPolicy(unittest.TestCase):
         clf = GateClassifier().fit(_train_set())
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "policy.json"
-            calibration.freeze_policy(clf, 0.5, "bankhash", path)
-            # identical rewrite ok
-            calibration.freeze_policy(clf, 0.5, "bankhash", path)
-            # different threshold -> refused
+            calibration.freeze_policy(clf, 0.5, "bankhash", path,
+                                      allow_unscreened=True)
+            calibration.freeze_policy(clf, 0.5, "bankhash", path,
+                                      allow_unscreened=True)
             with self.assertRaises(schema.ContractError):
-                calibration.freeze_policy(clf, 0.7, "bankhash", path)
+                calibration.freeze_policy(clf, 0.7, "bankhash", path,
+                                          allow_unscreened=True)
+
+    def test_freeze_requires_supported_screen(self):
+        clf = GateClassifier().fit(_train_set())
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "p.json"
+            with self.assertRaises(schema.ContractError):
+                calibration.freeze_policy(clf, 0.5, "bank", path)
+            with self.assertRaises(schema.ContractError):
+                calibration.freeze_policy(clf, 0.5, "bank", path,
+                                          screen={"supported": False})
+            calibration.freeze_policy(clf, 0.5, "bank", path,
+                                      screen={"supported": True})
+
+    def test_promote_blocks_on_failed_screen(self):
+        clf = GateClassifier().fit(_train_set())
+        weak = [LabelledCandidate(f"b{i}", f"fam{i % 3}", "calibration",
+                                  {"edit_size": 1.0, "ocr_confidence": 30.0},
+                                  "beneficial") for i in range(4)]
+        promo = calibration.promote_calibrated_gate(clf, 0.5, weak)
+        self.assertEqual(promo.method, "rule_based_fallback")
+        self.assertIsNone(promo.classifier)
+
+    def test_promote_calibrated_when_supported(self):
+        clf = GateClassifier().fit(_train_set())
+        strong = []
+        fams = [f"fam{i}" for i in range(12)]
+        for i in range(120):
+            strong.append(LabelledCandidate(
+                f"b{i}", fams[i % 12], "calibration",
+                {"edit_size": 1.0, "ocr_confidence": 30.0}, "beneficial"))
+        for i in range(120):
+            strong.append(LabelledCandidate(
+                f"h{i}", fams[i % 12], "calibration",
+                {"edit_size": 6.0, "ocr_confidence": 95.0}, "harmful"))
+        promo = calibration.promote_calibrated_gate(clf, 0.5, strong)
+        self.assertEqual(promo.method, "calibrated")
+
+    def test_degenerate_threshold_is_conservative(self):
+        clf = GateClassifier().fit(_train_set())
+        # calibration set with only neutral outcomes: nothing to gain, so the
+        # threshold must land on accept-nothing, not accept-everything.
+        neutral = [LabelledCandidate(
+            f"n{i}", f"fam{i % 3}", "calibration",
+            {"edit_size": 3.0, "ocr_confidence": 60.0}, "neutral")
+            for i in range(6)]
+        self.assertEqual(clf.choose_threshold(neutral), 1.0)
 
     def test_policy_roundtrip(self):
         clf = GateClassifier().fit(_train_set())

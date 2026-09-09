@@ -35,6 +35,13 @@ class ArmResult:
     harmful: int
     exact_correction_precision: float | None
     notes: str = ""
+    # Per-page failure breakdown. When these are None the arm status is used
+    # as an all-or-nothing fallback; supply them so a partly-failed arm is not
+    # reported as fully ok.
+    pages_attempted: int | None = None
+    pages_ok: int | None = None
+    pages_failed: int | None = None
+    pages_unsupported: int | None = None
 
     def __post_init__(self):
         if not isinstance(self.arm_id, str) or not self.arm_id:
@@ -83,6 +90,26 @@ class ArmResult:
                 )
         if not isinstance(self.notes, str):
             raise schema.ContractError("notes must be a string")
+        page_fields = (self.pages_attempted, self.pages_ok,
+                       self.pages_failed, self.pages_unsupported)
+        if any(v is not None for v in page_fields):
+            if any(v is None for v in page_fields):
+                raise schema.ContractError(
+                    "per-page fields must all be set or all be None"
+                )
+            for name in ("pages_attempted", "pages_ok", "pages_failed",
+                         "pages_unsupported"):
+                value = getattr(self, name)
+                if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                    raise schema.ContractError(
+                        f"{name} must be a non-negative int"
+                    )
+            if (self.pages_ok + self.pages_failed + self.pages_unsupported
+                    != self.pages_attempted):
+                raise schema.ContractError(
+                    "pages_ok + pages_failed + pages_unsupported must equal "
+                    "pages_attempted"
+                )
 
     def to_dict(self) -> dict:
         return {
@@ -96,6 +123,10 @@ class ArmResult:
             "harmful": self.harmful,
             "exact_correction_precision": self.exact_correction_precision,
             "notes": self.notes,
+            "pages_attempted": self.pages_attempted,
+            "pages_ok": self.pages_ok,
+            "pages_failed": self.pages_failed,
+            "pages_unsupported": self.pages_unsupported,
         }
 
 
@@ -223,16 +254,28 @@ def failure_denominator_table(arms: list[ArmResult], *,
     for arm in arms:
         if not isinstance(arm, ArmResult):
             raise schema.ContractError("arms entries must be ArmResult")
-        if arm.status == "ok":
-            ok, failed, unsupported = total_pages, 0, 0
-        elif arm.status == "failed":
-            ok, failed, unsupported = 0, total_pages, 0
+        if arm.pages_attempted is not None:
+            # Per-page truth from the records: a partly-failed arm is reported
+            # as partly failed, not collapsed to its overall status.
+            attempted = arm.pages_attempted
+            ok = arm.pages_ok
+            failed = arm.pages_failed
+            unsupported = arm.pages_unsupported
+            granularity = "per_page"
         else:
-            ok, failed, unsupported = 0, 0, total_pages
+            attempted = total_pages
+            if arm.status == "ok":
+                ok, failed, unsupported = total_pages, 0, 0
+            elif arm.status == "failed":
+                ok, failed, unsupported = 0, total_pages, 0
+            else:
+                ok, failed, unsupported = 0, 0, total_pages
+            granularity = "arm_status_fallback"
         rows.append({
             "arm_id": arm.arm_id,
             "status": arm.status,
-            "pages_attempted": total_pages,
+            "granularity": granularity,
+            "pages_attempted": attempted,
             "pages_ok": ok,
             "pages_failed": failed,
             "pages_unsupported": unsupported,
@@ -278,20 +321,20 @@ def reconcile(report: dict, *, expected_records: int) -> None:
             f"report header expected_records={header['expected_records']!r} "
             f"!= {expected_records!r}"
         )
-    for key in ("accepted", "beneficial", "neutral", "harmful"):
-        if key in totals and key in ("accepted",):
-            continue
+    n_records = header.get("n_records")
+    if isinstance(n_records, int) and expected_records and n_records != expected_records:
+        raise schema.ContractError(
+            f"report header n_records={n_records} != expected_records "
+            f"{expected_records}"
+        )
     failures = report.get("failures")
     if isinstance(failures, dict):
-        if failures.get("total_pages") != expected_records:
-            raise schema.ContractError(
-                "failure denominator total_pages does not match expected_records"
-            )
+        total_pages = failures.get("total_pages")
         for row in failures.get("rows", []):
-            if row.get("denominator") != expected_records:
+            if row.get("denominator") != total_pages:
                 raise schema.ContractError(
                     f"arm {row.get('arm_id')!r} denominator does not match "
-                    f"expected_records"
+                    f"the failure table total_pages"
                 )
             accounted = (
                 row.get("pages_ok", 0) + row.get("pages_failed", 0)
@@ -301,6 +344,11 @@ def reconcile(report: dict, *, expected_records: int) -> None:
                 raise schema.ContractError(
                     f"arm {row.get('arm_id')!r} page states do not sum "
                     f"to pages_attempted"
+                )
+            if row.get("pages_attempted", 0) > total_pages:
+                raise schema.ContractError(
+                    f"arm {row.get('arm_id')!r} attempted more pages than "
+                    f"total_pages"
                 )
     contrast = report.get("primary_contrast")
     if isinstance(contrast, dict) and "n_families" in contrast:
@@ -442,7 +490,11 @@ def rebuild_from_records(records_path, *,
     decisions: dict[str, dict[str, int]] = {}
     exact_hits: dict[str, int] = {}
     statuses: dict[str, str] = {}
+    page_states: dict[str, dict[str, int]] = {}
     n_records = 0
+
+    _OK = {"ok", ""}
+    _UNSUPPORTED = {"unsupported"}
     try:
         raw_lines = Path(records_path).read_text(encoding="utf-8").splitlines()
     except OSError as exc:
@@ -479,7 +531,24 @@ def rebuild_from_records(records_path, *,
             bucket[edit_class] += 1
             if record.get("exact", False):
                 exact_hits[arm_id] = exact_hits.get(arm_id, 0) + 1
-        statuses[arm_id] = record.get("status", statuses.get(arm_id, "ok"))
+        page_status = str(record.get("status", "ok"))
+        bucket_states = page_states.setdefault(
+            arm_id, {"attempted": 0, "ok": 0, "failed": 0, "unsupported": 0}
+        )
+        bucket_states["attempted"] += 1
+        if page_status in _OK:
+            bucket_states["ok"] += 1
+        elif page_status in _UNSUPPORTED:
+            bucket_states["unsupported"] += 1
+        else:  # empty/truncated/parse_error/invocation_error/failed/...
+            bucket_states["failed"] += 1
+        # arm-level status: worst-case summary of the per-page states
+        if bucket_states["failed"]:
+            statuses[arm_id] = "failed"
+        elif bucket_states["unsupported"] and not bucket_states["ok"]:
+            statuses[arm_id] = "unsupported"
+        else:
+            statuses.setdefault(arm_id, "ok")
         n_records += 1
 
     roster = config_payload.get("arms", sorted(families))
@@ -499,6 +568,7 @@ def rebuild_from_records(records_path, *,
         precision = None
         if coverage and bucket["accepted"]:
             precision = exact_hits.get(arm_id, 0) / bucket["accepted"]
+        states = page_states.get(arm_id)
         arm_results.append(ArmResult(
             arm_id=arm_id,
             status=statuses.get(arm_id, "failed" if arm_id not in families else "ok"),
@@ -509,6 +579,10 @@ def rebuild_from_records(records_path, *,
             neutral=bucket["neutral"],
             harmful=bucket["harmful"],
             exact_correction_precision=precision,
+            pages_attempted=states["attempted"] if states else None,
+            pages_ok=states["ok"] if states else None,
+            pages_failed=states["failed"] if states else None,
+            pages_unsupported=states["unsupported"] if states else None,
         ))
 
     baseline = baseline_table(arm_results)

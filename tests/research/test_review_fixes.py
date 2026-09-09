@@ -13,7 +13,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from pdf_craft_tool.research import metrics, schema, splits
+from pdf_craft_tool.research import metrics, report, schema, splits
 from pdf_craft_tool.research.annotation import AnnotationStore
 from pdf_craft_tool.research.census import build_census_from_regions
 
@@ -106,6 +106,55 @@ class RawVsNfcStrict(unittest.TestCase):
                 reference, hypothesis, policy="nfc_search")["edits"],
             0,
         )
+
+
+class ReportPerPageFailures(unittest.TestCase):
+    def test_partly_failed_arm_not_reported_as_ok(self):
+        arm = report.ArmResult(
+            arm_id="B3", status="failed", per_family_cer={"f1": 0.1},
+            coverage=0.0, accepted=0, beneficial=0, neutral=0, harmful=0,
+            exact_correction_precision=None,
+            pages_attempted=60, pages_ok=40, pages_failed=20, pages_unsupported=0,
+        )
+        table = report.failure_denominator_table([arm], total_pages=60)
+        row = table["rows"][0]
+        self.assertEqual(row["pages_ok"], 40)
+        self.assertEqual(row["pages_failed"], 20)
+        self.assertEqual(row["granularity"], "per_page")
+
+    def test_arm_status_fallback_when_no_per_page(self):
+        arm = report.ArmResult(
+            arm_id="B1", status="unsupported", per_family_cer={},
+            coverage=None, accepted=0, beneficial=0, neutral=0, harmful=0,
+            exact_correction_precision=None,
+        )
+        row = report.failure_denominator_table([arm], total_pages=60)["rows"][0]
+        self.assertEqual(row["pages_unsupported"], 60)
+        self.assertEqual(row["granularity"], "arm_status_fallback")
+
+    def test_rebuild_counts_per_page_failure(self):
+        with tempfile.TemporaryDirectory() as d:
+            recs = Path(d) / "records.jsonl"
+            lines = []
+            for i in range(4):
+                lines.append(schema.canonical_json({
+                    "arm_id": "B3", "family": "fam1",
+                    "reference": "abcdef", "hypothesis": "abcdef",
+                    "status": "ok" if i < 3 else "truncated",
+                    "accepted": False,
+                }))
+            recs.write_text("\n".join(lines) + "\n")
+            cfg = Path(d) / "cfg.json"
+            cfg.write_text(schema.canonical_json({
+                "study_id": "t", "arms": ["B3"], "total_pages": 4,
+                "expected_records": 4,
+                "primary_contrast": {"a": "B0", "b": "B5"},
+            }))
+            rep = report.rebuild_from_records(recs, config=str(cfg))
+            row = next(r for r in rep["failures"]["rows"] if r["arm_id"] == "B3")
+            self.assertEqual(row["pages_ok"], 3)
+            self.assertEqual(row["pages_failed"], 1)
+            report.reconcile(rep, expected_records=4)
 
 
 if __name__ == "__main__":

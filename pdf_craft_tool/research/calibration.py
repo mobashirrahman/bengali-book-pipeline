@@ -173,8 +173,11 @@ class GateClassifier:
                         harmful += 1
                     elif it.outcome == _BENEFICIAL:
                         beneficial += 1
-            # minimise harm, break ties toward more beneficial accepts
-            score = (harmful, -beneficial)
+            # minimise harm, then maximise beneficial accepts, then prefer the
+            # MORE conservative (higher) threshold on a tie -- so a degenerate
+            # calibration set with no beneficial/harmful items lands on
+            # accept-nothing (t=1.0), not accept-everything.
+            score = (harmful, -beneficial, -t)
             if best_score is None or score < best_score:
                 best_score, best_t = score, t
         return best_t
@@ -263,14 +266,68 @@ class FrozenPolicy:
     policy_hash: str
 
 
+@dataclass(frozen=True)
+class Promotion:
+    """The outcome of trying to promote a calibrated gate."""
+
+    method: str              # "calibrated" | "rule_based_fallback"
+    screen: dict
+    classifier: GateClassifier | None
+    threshold: float | None
+    reason: str
+
+
+def promote_calibrated_gate(classifier: GateClassifier, threshold: float,
+                            calib_items, *,
+                            screen: CalibrationScreen | None = None) -> Promotion:
+    """Gate the calibrated method on the roadmap's calibration-event screen.
+
+    Returns a ``calibrated`` promotion only when the screen is supported;
+    otherwise a ``rule_based_fallback`` promotion (no classifier). This is the
+    structural enforcement of S5's "insufficient class/family support blocks a
+    calibrated-method promotion" -- callers must go through here, not construct
+    a ``CalibratedGate`` directly on unscreened data.
+    """
+    result = (screen or CalibrationScreen()).evaluate(calib_items)
+    if result["supported"]:
+        return Promotion(
+            method="calibrated", screen=result, classifier=classifier,
+            threshold=float(threshold),
+            reason="calibration-event screen supported",
+        )
+    return Promotion(
+        method="rule_based_fallback", screen=result, classifier=None,
+        threshold=None,
+        reason="calibration-event screen not met; falling back to a "
+               "rule-based policy (enlarge development/calibration data before "
+               "presenting a learned gate)",
+    )
+
+
 def freeze_policy(classifier: GateClassifier, threshold: float, bank_hash: str,
-                  path, *, config_hashes: dict | None = None) -> Path:
-    """Write the immutable frozen policy artifact BEFORE any final-test scoring."""
+                  path, *, config_hashes: dict | None = None,
+                  screen: dict | None = None,
+                  allow_unscreened: bool = False) -> Path:
+    """Write the immutable frozen policy artifact BEFORE any final-test scoring.
+
+    A calibrated policy may only be frozen when ``screen`` reports
+    ``supported`` (or ``allow_unscreened=True`` is passed explicitly, e.g. to
+    record a rule-based fallback policy). This prevents shipping a learned gate
+    the calibration-event screen never cleared.
+    """
+    if not allow_unscreened:
+        if not isinstance(screen, dict) or not screen.get("supported"):
+            raise schema.ContractError(
+                "refusing to freeze a calibrated policy without a supported "
+                "calibration screen; pass screen=CalibrationScreen().evaluate("
+                "calib_items) or allow_unscreened=True for a rule-based policy"
+            )
     body = {
         "classifier": classifier.to_dict(),
         "threshold": float(threshold),
         "bank_hash": bank_hash,
         "config_hashes": dict(config_hashes or {}),
+        "screen_supported": bool(screen.get("supported")) if isinstance(screen, dict) else False,
     }
     policy_hash = schema.record_hash(body)
     target = Path(path)
@@ -291,7 +348,8 @@ def freeze_policy(classifier: GateClassifier, threshold: float, bank_hash: str,
 def load_policy(path) -> FrozenPolicy:
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     body = {k: data[k] for k in ("classifier", "threshold", "bank_hash",
-                                 "config_hashes")}
+                                 "config_hashes", "screen_supported")
+            if k in data}
     if schema.record_hash(body) != data.get("policy_hash"):
         raise schema.ContractError("frozen policy hash mismatch")
     return FrozenPolicy(
