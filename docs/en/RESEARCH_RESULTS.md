@@ -18,11 +18,12 @@ records what has been built and what regenerates a result once one exists.
 | S5 | `research/gates.py`, `calibration.py` | Acceptance-policy gates over one frozen candidate bank; hand-written L2 logistic gate; calibration/threshold on calibration split only; roadmap calibration-event screen with rule-based fallback | `test_gates`, `test_calibration` |
 | S6 | `research/external.py`, `report.py` | External evaluation with a hard `native` vs `common_text_metrics` split; baseline/ablation tables; primary contrast B5−B0; harm-vs-coverage points; offline table rebuild | `test_external`, `test_report` |
 | S7 | `research/__main__.py`, `research/export.py` | Separate research CLI (`python -m pdf_craft_tool.research`); reproducible export bundles with path-traversal and gold-leak guards | `test_cli`, `test_export` |
+| S2/S4 pilot | `research/pcex.py`, `research/build_pilot.py`, `annotation_server.py` `--images` | Read OCR region geometry + text from `.pcex`; freeze the 60-page pilot study root; serve hash-checked page scans in the blind UI; assemble the B0 input (`research ocr-pages`) | `test_pcex`, `test_annotation` |
 
 All tests are standard-library `unittest`, fully offline, no CUDA, no network,
 no model download, no whole-book conversion:
 `.venv/bin/python -m unittest discover -s tests/research -p 'test_*.py'` —
-**147 passing**.
+**155 passing**.
 
 Three independent reviewer passes were run (S0–S3, S4–S6, S7). Pass 1: 6 minor,
 all fixed. Pass 2: 2 major (per-page failure accounting in the report;
@@ -39,12 +40,33 @@ unmeasured, never a fake zero); symlinks skipped; bundle manifest integrity
 hash. Regression tests: `tests/research/test_review_fixes.py`,
 `test_calibration.py`.
 
+## 1b. Pilot preparation done without humans (2026-09-09)
+
+- **Study root frozen.** `research/build_pilot.py` built
+  `pdf-craft-output/research/pilot-study/`: immutable `sample_manifest.json`
+  (60 `SamplePage`, `split="pilot"`, `seed=20260909`), 60 rendered page scans,
+  a draft OCR-seeded census per page, and `pilot_provenance.json`. Keyed to the
+  OCR-time `source_sha256` (some `data/` PDFs drifted after in-place metadata
+  embedding; recorded, not an error).
+- **B0 baseline materialised.** `research ocr-pages` + `research run` (dry)
+  produced 60 real B0 `Prediction` records from the existing `.pcex` OCR — 54
+  `ok`, 6 `empty` (blank/figure pages). B1–B5 return `unsupported` offline.
+  Not scorable until pilot gold exists.
+- **Annotation server** now serves the page scan (`--images`, hash-checked)
+  alongside the blind line slots.
+- Still pending humans: the census review, the two blind annotators + one
+  adjudicator, and rights formalisation. See
+  [`RESEARCH_PILOT_RUNBOOK.md`](RESEARCH_PILOT_RUNBOOK.md).
+
 ## 2. Primary result table — regeneration recipe (for when results exist)
 
-1. Freeze the sample manifest (`python -m pdf_craft_tool.research sample`), the
-   gold export from the annotation pipeline, and the candidate bank.
-2. `python -m pdf_craft_tool.research run` for each baseline arm on the pilot
-   pages, with `--allow-execution` and a fixed budget, into a prediction cache.
+1. Freeze the sample manifest (`python -m pdf_craft_tool.research sample`, or
+   `research/build_pilot.py` for the pilot), the gold export from the
+   annotation pipeline, and the candidate bank.
+2. `python -m pdf_craft_tool.research ocr-pages` assembles the B0 input from
+   existing OCR; `python -m pdf_craft_tool.research run` for each baseline arm
+   on the pilot pages (`--allow-execution` + a fixed budget for B1–B5) into a
+   prediction cache.
 3. `python -m pdf_craft_tool.research fit-gate` on the training split;
    `choose_threshold` on the calibration split; `freeze_policy`.
 4. `python -m pdf_craft_tool.research evaluate` then `report` →

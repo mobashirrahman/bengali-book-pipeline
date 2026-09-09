@@ -54,6 +54,36 @@ Record the printed `sample_manifest.json` hash in the pilot log.
 
 ---
 
+## 0b. Materialise the B0 baseline (no humans, no models)
+
+B0 is the unchanged production Tesseract configuration. Its output for the 60
+pages already exists in the OCR `.pcex` artifacts, so it can be assembled now,
+offline:
+
+```bash
+S=pdf-craft-output/research/pilot-study
+.venv/bin/python -m pdf_craft_tool.research ocr-pages --study-root $S
+.venv/bin/python -m pdf_craft_tool.research run \
+    --study-root $S --manifest $S/sample_manifest.json \
+    --config research/configs/baselines.json \
+    --pages $S/ocr_pages.json --out $S/predictions.jsonl
+```
+
+- `ocr-pages` reads `pilot_provenance.json`, pulls the raw OCR text for each
+  page from its job's `.pcex`, and writes `ocr_pages.json` (`page_id` /
+  `image_ref` / `ocr_text`). No model call.
+- `run` (dry, `allow_execution` off) then produces 60 real B0 `Prediction`
+  records; B1–B5 come back `unsupported` — they need models / execution not
+  authorised here.
+- The B0 predictions are keyed to the OCR-time `source_sha256`, so they line
+  up with `sample_manifest.json` and, later, with `gold.json`.
+
+`predictions.jsonl` cannot be **scored** until pilot gold exists (`evaluate`
+refuses a page with no gold). It is ready to score the moment §6 produces
+`gold_pages.json`.
+
+---
+
 ## 1. Mandatory: human census review
 
 The seeded census is **OCR regions**, not an independent enumeration. Protocol

@@ -18,8 +18,8 @@ import json
 import sys
 from pathlib import Path
 
-from . import calibration, inventory, metrics, report, runners, schema, splits
-from . import adapters
+from . import adapters, calibration, inventory, metrics, pcex, report
+from . import runners, schema, splits
 from .export import build_bundle
 
 
@@ -130,6 +130,55 @@ def cmd_sample(args) -> int:
         return _fail(f"invalid sampling config or input: {exc}")
     print(f"sample manifest written to {args.out} "
           f"({len(result.pages)} pages)")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# ocr-pages — assemble the B0 inference input from existing OCR artifacts.
+# ---------------------------------------------------------------------------
+
+def _jobs_dir() -> Path:
+    return (Path(__file__).resolve().parents[2]
+            / "pdf-craft-output" / "cluster" / "jobs")
+
+
+def cmd_ocr_pages(args) -> int:
+    """Write ``ocr_pages.json`` (page_id / image_ref / ocr_text) for a study.
+
+    Reads the already-computed raw OCR from each page's ``.pcex`` artifact --
+    no model call, no execution. This is only the assembly of the B0
+    (unchanged Tesseract) inference input; scoring it needs gold.
+    """
+    try:
+        root = Path(args.study_root)
+        provenance = _read_json(
+            args.provenance or root / "pilot_provenance.json",
+            what="pilot provenance")
+        jobs_dir = Path(args.jobs_dir) if args.jobs_dir else _jobs_dir()
+        pages_out: list[dict] = []
+        for family in provenance.get("families", []):
+            job_id = family["job_id"]
+            matches = sorted((jobs_dir / job_id).glob("work/ocr/*/raw.pcex"))
+            if not matches:
+                raise schema.ContractError(
+                    f"no raw.pcex under job {job_id}")
+            page_numbers = [page["page_number"] for page in family["pages"]]
+            texts = pcex.read_page_text(matches[0], page_numbers)
+            for page in family["pages"]:
+                pages_out.append({
+                    "page_id": page["page_id"],
+                    "image_ref": page["image_sha256"],
+                    "ocr_text": texts[page["page_number"]],
+                })
+        if not pages_out:
+            raise schema.ContractError("provenance lists no pages")
+    except (schema.ContractError, OSError, ValueError, KeyError) as exc:
+        return _fail(f"cannot assemble OCR pages: {exc}")
+    out = Path(args.out) if args.out else root / "ocr_pages.json"
+    _write_json(out, pages_out)
+    empty = sum(1 for page in pages_out if not page["ocr_text"].strip())
+    print(f"ocr-pages: wrote {len(pages_out)} pages to {out} "
+          f"({empty} with empty OCR text)")
     return 0
 
 
@@ -545,6 +594,18 @@ def build_parser() -> argparse.ArgumentParser:
                       help="sampling input JSON (families or documents)")
     node.add_argument("--out", required=True, help="output sample manifest")
     node.set_defaults(func=cmd_sample)
+
+    node = sub.add_parser("ocr-pages", help="assemble the B0 inference input "
+                                           "from existing OCR artifacts")
+    node.add_argument("--study-root", required=True, help="study directory")
+    node.add_argument("--provenance", default=None,
+                      help="pilot provenance JSON "
+                           "(default: <study-root>/pilot_provenance.json)")
+    node.add_argument("--jobs-dir", default=None,
+                      help="cluster jobs directory (default: the repo's)")
+    node.add_argument("--out", default=None,
+                      help="output pages JSON (default: <study-root>/ocr_pages.json)")
+    node.set_defaults(func=cmd_ocr_pages)
 
     node = sub.add_parser("validate", help="revalidate a study root")
     node.add_argument("--study-root", required=True, help="study directory")

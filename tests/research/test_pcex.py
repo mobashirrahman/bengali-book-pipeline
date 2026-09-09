@@ -107,5 +107,62 @@ class ReadPcexPages(unittest.TestCase):
                 pcex.read_pcex_pages(path, [1])
 
 
+class ReadPageText(unittest.TestCase):
+    def test_text_is_reading_ordered_and_newline_joined(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "raw.pcex"
+            path.write_bytes(_pcex_bytes())
+            text = pcex.read_page_text(path, [1, 2])
+            self.assertEqual(text[1], "শিরোনাম\nপ্রথম\nদ্বিতীয়")
+            self.assertEqual(text[2], "পরের পাতা")
+
+    def test_empty_page_is_empty_string(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "raw.pcex"
+            path.write_bytes(_pcex_bytes(with_page2_blocks=False))
+            self.assertEqual(pcex.read_page_text(path, [2]), {2: ""})
+
+
+class OcrPagesCli(unittest.TestCase):
+    def test_assembles_b0_input_from_provenance(self):
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from pdf_craft_tool.research import __main__ as cli
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            job = root / "jobs" / "job-x" / "work" / "ocr" / "hash"
+            job.mkdir(parents=True)
+            (job / "raw.pcex").write_bytes(_pcex_bytes())
+            study = root / "study"
+            study.mkdir()
+            pid1, pid2 = "a" * 64, "b" * 64
+            (study / "pilot_provenance.json").write_text(json.dumps({
+                "families": [{
+                    "job_id": "job-x",
+                    "pages": [
+                        {"page_number": 1, "page_id": pid1,
+                         "image_sha256": "c" * 64},
+                        {"page_number": 2, "page_id": pid2,
+                         "image_sha256": "d" * 64},
+                    ],
+                }],
+            }), encoding="utf-8")
+            code = cli.main(["ocr-pages", "--study-root", str(study),
+                            "--jobs-dir", str(root / "jobs")])
+            self.assertEqual(code, 0)
+            pages = json.loads(
+                (study / "ocr_pages.json").read_text(encoding="utf-8"))
+            self.assertEqual([p["page_id"] for p in pages], [pid1, pid2])
+            self.assertIn("প্রথম", pages[0]["ocr_text"])
+            self.assertEqual(pages[0]["image_ref"], "c" * 64)
+
+
 if __name__ == "__main__":
     unittest.main()

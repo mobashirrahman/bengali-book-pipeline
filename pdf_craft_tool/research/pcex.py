@@ -97,6 +97,42 @@ def _kind_for(ref: str) -> str:
     return "heading" if (ref or "").strip().lower() in _HEADING_REFS else "body"
 
 
+def read_page_text(pcex_path, page_numbers) -> dict:
+    """Return ``{page_number: str}`` -- the raw OCR text for each page.
+
+    Blocks are concatenated in reading order (``(chapter, order)``), one per
+    line. This is OCR *output*: it is the B0 (unchanged Tesseract) prediction
+    input, never a census seed and never gold.
+    """
+    pages = read_pcex_pages(pcex_path, page_numbers)
+    path = Path(pcex_path)
+    wanted = sorted(pages)
+    texts: dict[int, list] = {number: [] for number in wanted}
+    with zipfile.ZipFile(path) as archive:
+        chapter_names = sorted(
+            name for name in archive.namelist()
+            if name.startswith("chapters/") and name.endswith(".xml"))
+        for seq, name in enumerate(chapter_names):
+            root = ET.fromstring(archive.read(name))
+            for block in root.iter("block"):
+                try:
+                    page_index = int(block.attrib["page_index"])
+                except (KeyError, ValueError):
+                    continue
+                if page_index not in texts:
+                    continue
+                try:
+                    order = int(block.attrib.get("order", "0"))
+                except ValueError:
+                    order = 0
+                texts[page_index].append((seq, order, (block.text or "").strip()))
+    result: dict[int, str] = {}
+    for number in wanted:
+        ordered = sorted(texts[number], key=lambda item: (item[0], item[1]))
+        result[number] = "\n".join(text for _, _, text in ordered if text)
+    return result
+
+
 def read_pcex_pages(pcex_path, page_numbers) -> dict:
     """Return ``{page_number: PcexPage}`` for the requested pages.
 
