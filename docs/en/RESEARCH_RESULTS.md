@@ -21,7 +21,18 @@ records what has been built and what regenerates a result once one exists.
 
 All tests are standard-library `unittest`, fully offline, no CUDA, no network,
 no model download, no whole-book conversion:
-`.venv/bin/python -m unittest discover -s tests/research -p 'test_*.py'`.
+`.venv/bin/python -m unittest discover -s tests/research -p 'test_*.py'` —
+**142 passing** as of the S7 commit.
+
+Two independent reviewer passes were run (S0–S3, then S4–S6). Pass 1 raised
+6 minor findings, all fixed. Pass 2 raised 2 major + 4 minor: the per-page
+failure accounting in the report and the structural enforcement of the
+calibration-event screen were fixed; two minor items (`proposal_bank_hash` not
+content-addressed — mitigated because gates cite the content-strict
+`CandidateBank.bank_hash`; and the unversioned `register_native_evaluator`
+callable — reachable only when a caller explicitly registers a versioned
+evaluator) were accepted with the rationale recorded. Regression tests for every
+fix live in `tests/research/test_review_fixes.py` and `test_calibration.py`.
 
 ## 2. Primary result table — regeneration recipe (for when results exist)
 
