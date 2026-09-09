@@ -83,8 +83,15 @@ class CliEndToEnd(unittest.TestCase):
             self.assertTrue(sidecar.is_file())
             rebuilt = json.loads(sidecar.read_text(encoding="utf-8"))
             report.reconcile(rebuilt, expected_records=n_pages)
-            self.assertEqual(rebuilt["baseline"]["totals"]["accepted"],
-                             n_pages)
+            # This is the transcription track: no correction candidates, so
+            # nothing is "accepted" and coverage/harm stay unmeasured -- the
+            # report must NOT fabricate a neutral edit per prediction.
+            self.assertEqual(rebuilt["baseline"]["totals"]["accepted"], 0)
+            b0 = next(r for r in rebuilt["baseline"]["rows"]
+                      if r["arm_id"] == "B0")
+            self.assertIn(b0["coverage"], (None,))
+            failures = {r["arm_id"]: r for r in rebuilt["failures"]["rows"]}
+            self.assertEqual(failures["B0"]["pages_ok"], n_pages)
 
 
 class CliFailures(unittest.TestCase):

@@ -26,8 +26,12 @@ from pathlib import Path
 from . import metrics, report, schema
 
 
-class ExportRefused(RuntimeError):
-    """Raised when a bundle cannot be built, verified or rebuilt safely."""
+class ExportRefused(schema.ContractError):
+    """Raised when a bundle cannot be built, verified or rebuilt safely.
+
+    A subclass of :class:`schema.ContractError` (hence ``ValueError``) so the
+    research CLI's error handling reports it cleanly instead of crashing.
+    """
 
 
 @dataclass(frozen=True)
@@ -47,8 +51,9 @@ DOCUMENTED_BASES = frozenset({
 UNDOCUMENTED_BASES = frozenset({"", "unknown", "excluded", "unapproved"})
 
 _PRIVATE_KEYS = frozenset({
-    "source_path", "private_source", "secret", "api_key",
-    "hidden_test", "test_label",
+    "source_path", "private_source", "secret", "api_key", "apikey",
+    "hidden_test", "test_label", "password", "passwd", "token", "access_token",
+    "refresh_token", "credential", "credentials", "private_key",
 })
 _ASSET_KEYS = frozenset({
     "asset", "asset_path", "assetpath", "image_path", "path",
@@ -90,16 +95,17 @@ def _decision_of(entry) -> tuple[bool, str, str]:
             return True, entry, ""
         return False, entry or "unknown", f"release decision {entry!r}"
     if isinstance(entry, dict):
-        status = str(entry.get("status", entry.get("decision", "approved")))
-        if entry.get("approved") is False or status in (
-                "unapproved", "denied", "missing", ""):
-            return False, status or "unknown", \
-                f"release decision {status!r}"
+        # Fail closed: a decision dict must POSITIVELY approve. A missing
+        # status / approved flag is treated as unapproved, not as "approved".
+        status = str(entry.get("status", entry.get("decision", ""))).strip()
         basis = str(entry.get("release_basis",
-                              entry.get("rights_basis", status)))
-        if status in APPROVED_DECISIONS or entry.get("approved") is True:
+                              entry.get("rights_basis", status))).strip()
+        if entry.get("approved") is True or status in APPROVED_DECISIONS:
+            if entry.get("approved") is False:
+                return False, basis or "unknown", "release decision revoked"
             return True, basis or "unknown", ""
-        return False, basis or "unknown", f"release decision {status!r}"
+        return (False, basis or "unknown",
+                f"release decision not approved (status={status!r})")
     return False, "unknown", f"unreadable release decision {entry!r}"
 
 
@@ -152,6 +158,34 @@ def _scan_record(record: dict, *, study_root: Path, where: str,
             stack.extend(current)
 
 
+_GOLD_NAME_TOKENS = ("gold", "reference", "diplomat", "transcription",
+                     "annotation", "adjudicat")
+_GOLD_PAGE_KEYS = frozenset({"lines", "reading_order", "annotator_ids"})
+
+
+def _looks_like_gold(payload, *, depth: int = 0) -> bool:
+    """Heuristic: does this JSON payload carry human transcription text?
+
+    Catches shapes ``schema.assert_no_gold_fields`` misses: a flat
+    ``{page_id: "diplomatic text"}`` map, or a GoldPage / list of GoldPages.
+    """
+    if depth > 6:
+        return False
+    if isinstance(payload, dict):
+        keys = set(payload)
+        if _GOLD_PAGE_KEYS & keys and "page_id" in keys:
+            return True
+        strvals = [v for v in payload.values() if isinstance(v, str)]
+        if payload and len(strvals) == len(payload) and all(
+                schema._is_sha256(k) for k in payload):
+            return True  # {page_id: text} gold map
+        return any(_looks_like_gold(v, depth=depth + 1)
+                   for v in payload.values())
+    if isinstance(payload, (list, tuple)):
+        return any(_looks_like_gold(v, depth=depth + 1) for v in payload)
+    return False
+
+
 def _records_in_file(path: Path, *, study_root: Path, where: str,
                      kind: str) -> None:
     """Parse a JSON/JSONL file and scan every record it holds."""
@@ -166,9 +200,22 @@ def _records_in_file(path: Path, *, study_root: Path, where: str,
                         if line.strip()]
         else:
             payloads = [json.loads(text)]
-    except ValueError as exc:
+    except ValueError:
         # Non-JSON assets (images, text) carry no scannable records.
         return
+    if kind == "inference":
+        base = where.lower()
+        if any(token in base for token in _GOLD_NAME_TOKENS):
+            raise ExportRefused(
+                f"file {where!r} is named like a gold/reference artefact and "
+                f"must not enter an inference bundle"
+            )
+        for payload in payloads:
+            if _looks_like_gold(payload):
+                raise ExportRefused(
+                    f"file {where!r} contains human-transcription (gold) text "
+                    f"and must not enter an inference bundle"
+                )
     for payload in payloads:
         if isinstance(payload, dict) and isinstance(
                 payload.get("records"), list):
@@ -209,6 +256,13 @@ def build_bundle(*, study_root, out_dir, kind: str,
         raise ExportRefused(f"study root {root} is not a directory")
     if not isinstance(release_decisions, dict):
         raise ExportRefused("release_decisions must be a dict")
+    if dest_root.exists() and any(dest_root.iterdir()):
+        # Never merge into an existing bundle: a stale file from a previous
+        # (e.g. gold) build would ride along, unlisted, into this manifest.
+        raise ExportRefused(
+            f"bundle destination {dest_root} is not empty; export to a fresh "
+            f"directory"
+        )
     try:
         root_resolved = root.resolve()
         dest_resolved = dest_root.resolve() \
@@ -219,13 +273,18 @@ def build_bundle(*, study_root, out_dir, kind: str,
     items: list[dict] = []
     excluded: list[dict] = []
     for path in sorted(root.rglob("*")):
-        if not path.is_file() or path.is_symlink() and not path.exists():
+        # Skip every symlink: a link that resolves outside the study root would
+        # otherwise be read and copied into the bundle.
+        if path.is_symlink() or not path.is_file():
             continue
         try:
-            if dest_root.exists() and path.resolve().is_relative_to(
-                    dest_resolved):
-                continue
+            resolved = path.resolve()
         except OSError:
+            continue
+        if not resolved.is_relative_to(root_resolved):
+            raise ExportRefused(
+                f"file {path} resolves outside the study root")
+        if dest_root.exists() and resolved.is_relative_to(dest_resolved):
             continue
         rel = path.relative_to(root).as_posix()
         approved, basis, reason = _decision_of(
@@ -266,13 +325,14 @@ def build_bundle(*, study_root, out_dir, kind: str,
         "items": items,
         "excluded": excluded,
     }
+    manifest["manifest_sha256"] = schema.record_hash(manifest)
     manifest_path = dest_root / BUNDLE_MANIFEST_NAME
     dest_root.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True)
         + "\n", encoding="utf-8")
     return {"bundle_manifest": str(manifest_path), "items": items,
-            "excluded": excluded}
+            "excluded": excluded, "manifest_sha256": manifest["manifest_sha256"]}
 
 
 def verify_bundle(bundle_dir) -> dict:
@@ -286,6 +346,12 @@ def verify_bundle(bundle_dir) -> dict:
             f"cannot load bundle manifest {manifest_path}: {exc}") from exc
     kind = manifest.get("kind", "inference")
     items = manifest.get("items", [])
+    recorded = manifest.get("manifest_sha256")
+    if recorded is not None:
+        core = {k: manifest[k] for k in ("kind", "study_root", "items",
+                                         "excluded") if k in manifest}
+        if schema.record_hash(core) != recorded:
+            raise ExportRefused("bundle manifest integrity hash mismatch")
     for item in items:
         rel = item["rel_path"]
         target = root / rel

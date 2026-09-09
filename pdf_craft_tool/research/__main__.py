@@ -357,7 +357,7 @@ def cmd_evaluate(args) -> int:
         rows = []
         per_arm_family: dict[tuple[str, str], list[float]] = {}
         decisions: dict[str, dict[str, int]] = {}
-        exact_hits: dict[str, int] = {}
+        per_arm_states: dict[str, dict[str, int]] = {}
         statuses: dict[str, str] = {}
         for line in pred_lines:
             if not line.strip():
@@ -378,51 +378,49 @@ def cmd_evaluate(args) -> int:
             family = families.get(prediction.page_id, "default")
             cer = scored["character"]["cer"]
             per_arm_family.setdefault((arm, family), []).append(cer)
-            accepted = prediction.failure_state == "ok"
-            bucket = decisions.setdefault(
-                arm, {"accepted": 0, "beneficial": 0,
-                      "neutral": 0, "harmful": 0})
+            decisions.setdefault(arm, {})
             if prediction.failure_state == "ok":
                 status = "ok"
             elif prediction.failure_state == "unsupported":
                 status = "unsupported"
             else:
-                status = "failed"
-            statuses[arm] = status
+                status = prediction.failure_state  # empty/truncated/parse_error
+            per_arm_states.setdefault(arm, {"attempted": 0, "ok": 0,
+                                            "failed": 0, "unsupported": 0})
+            st = per_arm_states[arm]
+            st["attempted"] += 1
+            st["ok" if status == "ok" else
+               ("unsupported" if status == "unsupported" else "failed")] += 1
+            statuses[arm] = ("failed" if st["failed"] else
+                             ("unsupported" if st["unsupported"] and not st["ok"]
+                              else "ok"))
+            # This subcommand scores the TRANSCRIPTION track only: it has no
+            # correction candidates/decisions, so it never emits accepted /
+            # edit_class. Coverage and the harm endpoints stay unmeasured
+            # (None) rather than a fabricated zero.
             rows.append({
                 "arm_id": arm,
                 "family": family,
                 "reference": reference,
                 "hypothesis": prediction.parsed_text,
-                "accepted": accepted,
-                "edit_class": "neutral" if accepted else "neutral",
-                "exact": bool(accepted and
-                              prediction.parsed_text == reference),
                 "status": status,
+                "correction_track": False,
             })
-            if accepted:
-                bucket["accepted"] += 1
-                bucket["neutral"] += 1
-                if prediction.parsed_text == reference:
-                    exact_hits[arm] = exact_hits.get(arm, 0) + 1
         arm_results = []
         for arm in sorted(decisions):
             per_family = {family: sum(values) / len(values)
                           for (arm_id, family), values in
                           sorted(per_arm_family.items())
                           if arm_id == arm}
-            bucket = decisions[arm]
-            attempted = sum(len(values) for (arm_id, _), values in
-                            per_arm_family.items() if arm_id == arm)
-            coverage = (bucket["accepted"] / attempted) if attempted else 0.0
-            precision = (exact_hits.get(arm, 0) / bucket["accepted"]
-                         ) if coverage and bucket["accepted"] else None
+            st = per_arm_states.get(arm, {"attempted": 0, "ok": 0,
+                                          "failed": 0, "unsupported": 0})
             arm_results.append(report.ArmResult(
                 arm_id=arm, status=statuses.get(arm, "ok"),
-                per_family_cer=per_family, coverage=coverage,
-                accepted=bucket["accepted"], beneficial=bucket["beneficial"],
-                neutral=bucket["neutral"], harmful=bucket["harmful"],
-                exact_correction_precision=precision))
+                per_family_cer=per_family, coverage=None,
+                accepted=0, beneficial=0, neutral=0, harmful=0,
+                exact_correction_precision=None,
+                pages_attempted=st["attempted"], pages_ok=st["ok"],
+                pages_failed=st["failed"], pages_unsupported=st["unsupported"]))
         table = report.baseline_table(arm_results)
     except (schema.ContractError, OSError, ValueError) as exc:
         return _fail(f"invalid evaluation inputs: {exc}")

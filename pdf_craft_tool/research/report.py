@@ -491,6 +491,7 @@ def rebuild_from_records(records_path, *,
     exact_hits: dict[str, int] = {}
     statuses: dict[str, str] = {}
     page_states: dict[str, dict[str, int]] = {}
+    has_decisions: set[str] = set()  # arms with any correction-decision record
     n_records = 0
 
     _OK = {"ok", ""}
@@ -521,9 +522,17 @@ def rebuild_from_records(records_path, *,
         bucket = decisions.setdefault(arm_id, {
             "accepted": 0, "beneficial": 0, "neutral": 0, "harmful": 0,
         })
+        if "accepted" in record:
+            has_decisions.add(arm_id)
         if record.get("accepted", False):
             bucket["accepted"] += 1
-            edit_class = record.get("edit_class", "neutral")
+            edit_class = record.get("edit_class")
+            if edit_class is None:
+                raise schema.ContractError(
+                    "an accepted correction record must carry an edit_class "
+                    "(beneficial/neutral/harmful); a fabricated default is "
+                    "not allowed"
+                )
             if edit_class not in ("beneficial", "neutral", "harmful"):
                 raise schema.ContractError(
                     f"unknown edit_class {edit_class!r}"
@@ -564,7 +573,12 @@ def rebuild_from_records(records_path, *,
         attempted = sum(
             len(values) for values in families.get(arm_id, {}).values()
         )
-        coverage = (bucket["accepted"] / attempted) if attempted else 0.0
+        if arm_id not in has_decisions:
+            # No correction decisions in the records for this arm: coverage and
+            # the harm endpoints are UNMEASURED, not a measured zero.
+            coverage = None
+        else:
+            coverage = (bucket["accepted"] / attempted) if attempted else 0.0
         precision = None
         if coverage and bucket["accepted"]:
             precision = exact_hits.get(arm_id, 0) / bucket["accepted"]

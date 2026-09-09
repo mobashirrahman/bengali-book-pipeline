@@ -9,11 +9,12 @@ Findings addressed:
   * metrics: raw policy preserves what nfc_strict composes (NFD fixture)
 """
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
 
-from pdf_craft_tool.research import metrics, report, schema, splits
+from pdf_craft_tool.research import export, metrics, report, schema, splits
 from pdf_craft_tool.research.annotation import AnnotationStore
 from pdf_craft_tool.research.census import build_census_from_regions
 
@@ -155,6 +156,70 @@ class ReportPerPageFailures(unittest.TestCase):
             self.assertEqual(row["pages_ok"], 3)
             self.assertEqual(row["pages_failed"], 1)
             report.reconcile(rep, expected_records=4)
+
+
+class ExportSecurity(unittest.TestCase):
+    def _study(self, d, files: dict):
+        root = Path(d) / "study"
+        root.mkdir()
+        for name, content in files.items():
+            p = root / name
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content, encoding="utf-8")
+        return root
+
+    def test_export_refused_is_a_value_error(self):
+        # so the CLI's `except (ContractError, OSError, ValueError)` catches it
+        self.assertTrue(issubclass(export.ExportRefused, schema.ContractError))
+        self.assertTrue(issubclass(export.ExportRefused, ValueError))
+
+    def test_build_bundle_refuses_nonempty_out_dir(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._study(d, {"notes.txt": "hi"})
+            out = Path(d) / "bundle"
+            out.mkdir()
+            (out / "stale.txt").write_text("old", encoding="utf-8")
+            with self.assertRaises(export.ExportRefused):
+                export.build_bundle(study_root=root, out_dir=out,
+                                    kind="inference",
+                                    release_decisions={"notes.txt": "approved"})
+
+    def test_gold_map_named_reference_refused_in_inference(self):
+        with tempfile.TemporaryDirectory() as d:
+            gold_map = {("a" * 64): "রবীন্দ্রনাথ", ("b" * 64): "শরৎচন্দ্র"}
+            root = self._study(d, {
+                "reference_pages.json": schema.canonical_json(gold_map),
+            })
+            out = Path(d) / "bundle"
+            with self.assertRaises(export.ExportRefused):
+                export.build_bundle(
+                    study_root=root, out_dir=out, kind="inference",
+                    release_decisions={"reference_pages.json": "approved"})
+
+    def test_decision_dict_without_status_is_excluded(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._study(d, {"data.json": '{"x": 1}'})
+            out = Path(d) / "bundle"
+            result = export.build_bundle(
+                study_root=root, out_dir=out, kind="inference",
+                release_decisions={"data.json": {"reviewer": "alice"}})
+            self.assertEqual(result["items"], [])
+            self.assertEqual(len(result["excluded"]), 1)
+
+    def test_manifest_integrity_hash_checked(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self._study(d, {"a.txt": "hello"})
+            out = Path(d) / "bundle"
+            export.build_bundle(study_root=root, out_dir=out, kind="inference",
+                                release_decisions={"a.txt": "approved"})
+            self.assertEqual(export.verify_bundle(out)["ok"], True)
+            mpath = out / export.BUNDLE_MANIFEST_NAME
+            m = json.loads(mpath.read_text())
+            m["items"].append({"rel_path": "ghost", "sha256": "0" * 64,
+                               "role": "asset", "release_basis": "approved"})
+            mpath.write_text(json.dumps(m), encoding="utf-8")
+            with self.assertRaises(export.ExportRefused):
+                export.verify_bundle(out)
 
 
 if __name__ == "__main__":
