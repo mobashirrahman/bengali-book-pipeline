@@ -147,19 +147,31 @@ def extract_cover_text(
                 top=min(ys), left=min(xs), right=max(xs),
             ))
 
+    return reading_from_regions(regions, front_page_index=page_indexes[0])
+
+
+def reading_from_regions(
+    regions: list[CoverTextRegion], *, front_page_index: int = 0
+) -> CoverReading:
+    """Rank already-recognised regions into title and author candidates.
+
+    Recognition is the expensive half and its output is worth keeping, so the
+    ranking is separated from it: a corpus can be OCR'd once and re-interpreted
+    as often as the ranking rules change, without touching a GPU again.
+    """
     # The front cover alone decides the ranked candidates.  Page 2 is usually the
     # title or copyright page, valuable for publisher and date but typographically
     # flat, so it would pollute a height-based ranking.
-    front = merge_lines(regions, page_indexes[0])
+    front = merge_lines(regions, front_page_index)
 
     # Tallest first: on a cover, size encodes bibliographic rank.  The title is
     # the largest block and the author is normally the next distinct one, so the
     # two lists are offset rather than identical -- but they deliberately
     # overlap, because the caller decides the roles by looking each candidate up
     # in the catalogue rather than trusting typography alone.
-    regions.sort(key=lambda region: (-region.height, -region.confidence))
+    ordered = sorted(regions, key=lambda region: (-region.height, -region.confidence))
     return CoverReading(
-        regions=tuple(regions),
+        regions=tuple(ordered),
         title_candidates=tuple(region.text for region in front[:3]),
         author_candidates=tuple(region.text for region in front[1:4]),
     )
