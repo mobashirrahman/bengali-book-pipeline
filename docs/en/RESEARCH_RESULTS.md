@@ -22,17 +22,22 @@ records what has been built and what regenerates a result once one exists.
 All tests are standard-library `unittest`, fully offline, no CUDA, no network,
 no model download, no whole-book conversion:
 `.venv/bin/python -m unittest discover -s tests/research -p 'test_*.py'` —
-**142 passing** as of the S7 commit.
+**147 passing**.
 
-Two independent reviewer passes were run (S0–S3, then S4–S6). Pass 1 raised
-6 minor findings, all fixed. Pass 2 raised 2 major + 4 minor: the per-page
-failure accounting in the report and the structural enforcement of the
-calibration-event screen were fixed; two minor items (`proposal_bank_hash` not
-content-addressed — mitigated because gates cite the content-strict
-`CandidateBank.bank_hash`; and the unversioned `register_native_evaluator`
-callable — reachable only when a caller explicitly registers a versioned
-evaluator) were accepted with the rationale recorded. Regression tests for every
-fix live in `tests/research/test_review_fixes.py` and `test_calibration.py`.
+Three independent reviewer passes were run (S0–S3, S4–S6, S7). Pass 1: 6 minor,
+all fixed. Pass 2: 2 major (per-page failure accounting in the report;
+structural enforcement of the calibration-event screen) + 4 minor — the majors
+and two minors fixed; two minors accepted with rationale (`proposal_bank_hash`
+is superseded by the content-strict `CandidateBank.bank_hash` gates actually
+cite; `register_native_evaluator` is reachable only via an explicit versioned
+registration). Pass 3 (S7 export/CLI): 5 major + 3 minor, all fixed —
+`ExportRefused` now a `ValueError` so the CLI reports it cleanly; non-empty
+bundle destination refused; inference bundles reject gold-shaped content by
+value not just filename; release decisions fail closed; the `evaluate`
+subcommand no longer fabricates the harm endpoint (coverage/harm reported
+unmeasured, never a fake zero); symlinks skipped; bundle manifest integrity
+hash. Regression tests: `tests/research/test_review_fixes.py`,
+`test_calibration.py`.
 
 ## 2. Primary result table — regeneration recipe (for when results exist)
 
