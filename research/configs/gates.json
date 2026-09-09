@@ -1,0 +1,26 @@
+{
+  "gate_version": "s5-1",
+  "conflict_policy": "reject_overlapping_accepts",
+  "arms": [
+    {"gate_id": "unchanged", "required_signals": [], "role": "mandatory do-nothing baseline (B0-side)"},
+    {"gate_id": "edit_size", "required_signals": ["edit_size"], "role": "ablation: edit-size rule"},
+    {"gate_id": "ocr_confidence", "required_signals": ["ocr_confidence"], "role": "ablation: OCR-confidence threshold"},
+    {"gate_id": "agreement", "required_signals": ["alt_recognizer_agrees"], "role": "ablation: alternate-recogniser agreement"},
+    {"gate_id": "existing_policy", "required_signals": ["verifier_pass", "edit_size"], "role": "B4: existing conservative exact-span + Tesseract-crop gate"},
+    {"gate_id": "calibrated", "required_signals": "classifier feature set", "role": "B5: evidence-based gate with abstention; needs a fitted calibration.GateClassifier + locked threshold"}
+  ],
+  "classifier_features_candidate": [
+    "edit_size", "ocr_confidence", "alt_recognizer_agrees", "crop_quality",
+    "touches_name_or_numeral", "historical_form", "verifier_pass"
+  ],
+  "fitting_rule": "GateClassifier.fit on train split only; choose_threshold on calibration split only; test split refused by split_guard",
+  "calibration_screen": {
+    "min_beneficial": 100,
+    "min_harmful": 100,
+    "min_families": 10,
+    "stability": "leave_one_family_out_threshold_stable",
+    "fallback": "rule_based_policy",
+    "note": "operational minimum, not a statistical guarantee"
+  },
+  "frozen_before_test": true
+}
