@@ -1,0 +1,39 @@
+{
+  "study_id": "bengali-ocr-trust-pilot",
+  "schema_version": 1,
+  "draft": true,
+  "primary_endpoint": {
+    "name": "macro_per_family_cer_strict_nfc",
+    "contrast": "B5_minus_B0",
+    "unit": "character_error_rate",
+    "direction": "lower_is_better",
+    "budget": "fixed_inference_budget_to_be_set_after_pilot"
+  },
+  "baseline_candidates": ["B0", "B1", "B2", "B3", "B4", "B5"],
+  "sampling": {
+    "seed": 20260909,
+    "development_families": 12,
+    "development_pages_per_family": 5,
+    "total_development_pages": 60,
+    "page_selection": "probability_sample_within_family",
+    "challenge_sample": "separately_identified_not_in_prevalence_estimate"
+  },
+  "split_allocation": {
+    "train": 24,
+    "calibration": 12,
+    "test": 24
+  },
+  "uncertainty": {
+    "resample_unit": "work_edition_family",
+    "method": "paired_bootstrap",
+    "iterations": 10000,
+    "note": "families resampled whole; systems paired; not per-character"
+  },
+  "calibration_screen": {
+    "min_beneficial": 100,
+    "min_harmful": 100,
+    "min_families": 10,
+    "stability": "leave_one_family_out_threshold_stable",
+    "note": "operational minimum, not a statistical guarantee; fall back to a rule-based policy if unmet"
+  }
+}

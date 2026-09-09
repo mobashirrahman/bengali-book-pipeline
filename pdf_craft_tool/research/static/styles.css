@@ -1,0 +1,27 @@
+/* Tiny loopback-only annotation styles. */
+:root { color-scheme: light; }
+body {
+  font-family: system-ui, "Noto Sans Bengali", sans-serif;
+  margin: 0;
+  background: #f7f5ef;
+  color: #1d1a14;
+}
+main { max-width: 46rem; margin: 0 auto; padding: 1.5rem; }
+.hint { color: #5c5546; }
+.auth { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: end; }
+.auth label { display: grid; gap: 0.25rem; font-size: 0.9rem; }
+.auth input { padding: 0.4rem 0.5rem; min-width: 14rem; }
+button { padding: 0.45rem 0.9rem; cursor: pointer; }
+button:disabled { cursor: not-allowed; opacity: 0.5; }
+.progress, .status { min-height: 1.4em; font-size: 0.95rem; }
+.image-area {
+  border: 2px dashed #8a8172;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  margin: 1rem 0;
+  background: #fffdf6;
+}
+.mono { font-family: ui-monospace, monospace; font-size: 0.8rem; word-break: break-all; }
+.line-slot { margin: 0.75rem 0; }
+.line-slot label { display: block; font-size: 0.85rem; color: #5c5546; }
+.line-slot textarea { width: 100%; min-height: 3rem; font-size: 1.1rem; }

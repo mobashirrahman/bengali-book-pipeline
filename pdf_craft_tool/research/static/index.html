@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blind annotation</title>
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<main>
+  <h1>Blind page transcription</h1>
+  <p class="hint">Transcribe from the page image only. No drafts are shown here.</p>
+  <section class="auth">
+    <label>Annotator token
+      <input id="token" type="password" autocomplete="off" placeholder="paste your token">
+    </label>
+    <label>Page id
+      <input id="page-id" type="text" autocomplete="off" placeholder="page sha256">
+    </label>
+    <button id="load" type="button">Load page</button>
+  </section>
+  <p id="progress" class="progress" aria-live="polite"></p>
+  <section id="image-area" class="image-area" aria-label="Page image">
+    <p>Page image placeholder: verify the frozen image hash before typing.</p>
+    <p id="image-hash" class="mono"></p>
+  </section>
+  <form id="lines-form">
+    <div id="lines"></div>
+    <button id="submit" type="submit" disabled>Submit transcription</button>
+  </form>
+  <p id="status" class="status" aria-live="polite"></p>
+</main>
+<script src="/static/app.js"></script>
+</body>
+</html>

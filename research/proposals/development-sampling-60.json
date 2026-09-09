@@ -1,0 +1,343 @@
+{
+ "seed": "20260909",
+ "rule": "see RESEARCH proposal",
+ "frame_size": 1181,
+ "families": [
+  {
+   "cell": [
+    "pre1947",
+    "clean",
+    "short"
+   ],
+   "job_id": "1ab051000aac2bfa0a98e1827f81dcae487064af46bed7fc4b314e564bb2bd88",
+   "sha256": "4060ede4fd04fb510ee13b8e8c40f6d5b916e45d3143c3bd8f28fcf3d4c646a7",
+   "profile": "3e954be3",
+   "author_dir": "রবীন্দ্রনাথ ঠাকুর",
+   "title": "Choraidhon-Rabindranath Tagore",
+   "npages": 7,
+   "pages": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "sel_prob": 0.7143,
+   "proof_available": true,
+   "era": "pre1947",
+   "quality_proxy": "clean",
+   "length_band": "short",
+   "poetry_title": false,
+   "format": "pdf",
+   "source": "/scratch/pdf-craft/data/রবীন্দ্রনাথ ঠাকুর/Rabindranath/Others/Choraidhon-Rabindranath Tagore.pdf"
+  },
+  {
+   "cell": [
+    "pre1947",
+    "clean",
+    "long"
+   ],
+   "job_id": "353387a71b7d7fca6a1aa419da275b4b2de41173f8a63ee41c30ca675818f5a9",
+   "sha256": "888507bfc58a45b7b8e299841fb2fc4368893619eececc626da7f9fd1282490c",
+   "profile": "9f23c684",
+   "author_dir": "শরৎচন্দ্র চট্টোপাধ্যায়",
+   "title": "দেবদাস - শরৎচন্দ্র চট্টোপাধ্যায়",
+   "npages": 73,
+   "pages": [
+    25,
+    42,
+    45,
+    50,
+    51
+   ],
+   "sel_prob": 0.0725,
+   "proof_available": false,
+   "era": "pre1947",
+   "quality_proxy": "clean",
+   "length_band": "medium",
+   "poetry_title": false,
+   "format": "pdf",
+   "source": "/scratch/pdf-craft/data/শরৎচন্দ্র চট্টোপাধ্যায়/উপন্যাস [HQ]/দেবদাস - শরৎচন্দ্র চট্টোপাধ্যায়.pdf"
+  },
+  {
+   "cell": [
+    "pre1947",
+    "mixed",
+    "short"
+   ],
+   "job_id": "60df28fc1c6aa633454442d2ac68d358acc3034503b4e749dd2a640ef8765a7f",
+   "sha256": "09858b1c083623c87e4ac2b334a88b17385876f531606c4a62773da0c7e176ee",
+   "profile": "3e954be3",
+   "author_dir": "কাজী নজরুল ইসলাম",
+   "title": "চক্রবাক - কাজী নজরুল ইসলাম",
+   "npages": 23,
+   "pages": [
+    9,
+    15,
+    16,
+    17,
+    21
+   ],
+   "sel_prob": 0.2632,
+   "proof_available": true,
+   "era": "pre1947",
+   "quality_proxy": "mixed",
+   "length_band": "short",
+   "poetry_title": false,
+   "format": "pdf",
+   "source": "/scratch/pdf-craft/data/কাজী নজরুল ইসলাম/চক্রবাক - কাজী নজরুল ইসলাম.pdf"
+  },
+  {
+   "cell": [
+    "pre1947",
+    "mixed",
+    "long"
+   ],
+   "job_id": "a926ea673a1743ce45991b583e160c20f40934c9b76293ae5cb6e62be590f3b6",
+   "sha256": "dee1bacf168599f1483f898b14f4f56ed5f0b9479e4cfb718deceadc5d41d71a",
+   "profile": "3e954be3",
+   "author_dir": "মাইকেল মধুসূদন দত্ত",
+   "title": "(০৯) মাইকেল (নাটক) - শ্রীমহেন্দ্রনাথ গুপ্ত",
+   "npages": 122,
+   "pages": [
+    22,
+    30,
+    46,
+    103,
+    110
+   ],
+   "sel_prob": 0.0424,
+   "proof_available": true,
+   "era": "pre1947",
+   "quality_proxy": "mixed",
+   "length_band": "long",
+   "poetry_title": false,
+   "format": "pdf",
+   "source": "/scratch/pdf-craft/data/মাইকেল মধুসূদন দত্ত/এবং মধুসূদন/(০৯) মাইকেল (নাটক) - শ্রীমহেন্দ্রনাথ গুপ্ত.pdf"
+  },
+  {
+   "cell": [
+    "pre1947",
+    "noisy",
+    "short"
+   ],
+   "job_id": "a91ccd5e069514d75405dfc70bf946e5e3cae901dce08be664a061993bb93af7",
+   "sha256": "a9d5d0a0529016ba6d1f5c7017f5217ffc8822c618ca9d15a9962ba073c4ec07",
+   "profile": "9f23c684",
+   "author_dir": "incoming-scraped",
+   "title": "Unknown Author - ১৫০টি কবিতার বই - a9d5d0a05290",
+   "npages": 23,
+   "pages": [
+    4,
+    16,
+    17,
+    20,
+    21
+   ],
+   "sel_prob": 0.2632,
+   "proof_available": false,
+   "era": "modern",
+   "quality_proxy": "noisy",
+   "length_band": "short",
+   "poetry_title": true,
+   "format": "",
+   "source": "/scratch/pdf-craft/data/incoming-scraped/amarboi/books/Unknown Author - ১৫০টি কবিতার বই - a9d5d0a05290.pdf"
+  },
+  {
+   "cell": [
+    "pre1947",
+    "noisy",
+    "long"
+   ],
+   "job_id": "9987cedf2841c80784e63f79c5a0608df0cc42965bd2bba884e9cc4638080828",
+   "sha256": "5aaca7f6f2ac405fb6155ca2d4a66a243a7e46f1be1e0e16a4e03d18c66d6b36",
+   "profile": "3e954be3",
+   "author_dir": "ছোটদের বই",
+   "title": "এসো রঙ করি",
+   "npages": 114,
+   "pages": [
+    4,
+    60,
+    64,
+    71,
+    108
+   ],
+   "sel_prob": 0.0455,
+   "proof_available": true,
+   "era": "modern",
+   "quality_proxy": "noisy",
+   "length_band": "medium",
+   "poetry_title": false,
+   "format": "pdf",
+   "source": "/scratch/pdf-craft/data/ছোটদের বই/এসো রঙ করি.pdf"
+  },
+  {
+   "cell": [
+    "modern",
+    "clean",
+    "short"
+   ],
+   "job_id": "56eece6b0dd285849635a2abc0587f9513222178f7586091cbf34ae3930bea55",
+   "sha256": "0b561cd68443e33b34ee2527eccf6b1fb499e86f67151688c267da09a58159fc",
+   "profile": "3e954be3",
+   "author_dir": "ওয়েস্টার্ন বই - সেবা প্রকাশনী",
+   "title": "Cowboy",
+   "npages": 14,
+   "pages": [
+    6,
+    7,
+    9,
+    11,
+    12
+   ],
+   "sel_prob": 0.5,
+   "proof_available": true,
+   "era": "modern",
+   "quality_proxy": "clean",
+   "length_band": "short",
+   "poetry_title": false,
+   "format": "pdf",
+   "source": "/scratch/pdf-craft/data/ওয়েস্টার্ন বই - সেবা প্রকাশনী/Cowboy.pdf"
+  },
+  {
+   "cell": [
+    "modern",
+    "clean",
+    "long"
+   ],
+   "job_id": "589727f2d355b00b8947cc1f7e331e4427e87628932b3a79957976012f88d5a0",
+   "sha256": "9d520529f8e9004f88d70f6bcac6b46d3832eb876e27b442645ae032920e2f84",
+   "profile": "3e954be3",
+   "author_dir": "তসলিমা নাসরিন",
+   "title": "আমি ভালো নেই, তুমি ভাল থেকো প্রিয় দেশ - তসলিমা নাসরিন",
+   "npages": 444,
+   "pages": [
+    68,
+    133,
+    280,
+    341,
+    368
+   ],
+   "sel_prob": 0.0114,
+   "proof_available": true,
+   "era": "modern",
+   "quality_proxy": "clean",
+   "length_band": "long",
+   "poetry_title": false,
+   "format": "pdf",
+   "source": "/scratch/pdf-craft/data/তসলিমা নাসরিন/আমি ভালো নেই, তুমি ভাল থেকো প্রিয় দেশ - তসলিমা নাসরিন.pdf"
+  },
+  {
+   "cell": [
+    "modern",
+    "mixed",
+    "short"
+   ],
+   "job_id": "83af5471d78bc5c7f5ec857aa2d11365172a4a9778a8dd0affc1901d1c68e74a",
+   "sha256": "579c0fa5782064c6813ff9df83a1df67bafbf33b1041fb15baf16292abe05985",
+   "profile": "3e954be3",
+   "author_dir": "হুমায়ুন আজাদ",
+   "title": "মুখোমুখি হুমায়ুন আজাদ",
+   "npages": 14,
+   "pages": [
+    3,
+    6,
+    7,
+    10,
+    11
+   ],
+   "sel_prob": 0.5,
+   "proof_available": true,
+   "era": "modern",
+   "quality_proxy": "mixed",
+   "length_band": "short",
+   "poetry_title": false,
+   "format": "pdf",
+   "source": "/scratch/pdf-craft/data/হুমায়ুন আজাদ/এবং হুমায়ুন আজাদ/মুখোমুখি হুমায়ুন আজাদ.pdf"
+  },
+  {
+   "cell": [
+    "modern",
+    "mixed",
+    "long"
+   ],
+   "job_id": "4d2f85011e550f0f08fad4f4607e8881719eb6591d0921e93051a50379642653",
+   "sha256": "0659bc675340b6c1eca027690a5132130b8966c3a4b65c8aeb66a4742d644f04",
+   "profile": "9f23c684",
+   "author_dir": "অনুবাদ সাহিত্য",
+   "title": "ইতালীর সেরা গল্প - শ্রীরবীন্দ্রকুমার বসু অনূদিত Italir Sera Galpa",
+   "npages": 164,
+   "pages": [
+    64,
+    74,
+    87,
+    102,
+    140
+   ],
+   "sel_prob": 0.0312,
+   "proof_available": false,
+   "era": "modern",
+   "quality_proxy": "mixed",
+   "length_band": "long",
+   "poetry_title": false,
+   "format": "pdf",
+   "source": "/scratch/pdf-craft/data/অনুবাদ সাহিত্য/বিভিন্ন লেখক-লেখিকা Different Writers/ইতালীর সেরা গল্প - শ্রীরবীন্দ্রকুমার বসু অনূদিত Italir Sera Galpa.pdf"
+  },
+  {
+   "cell": [
+    "modern",
+    "noisy",
+    "short"
+   ],
+   "job_id": "d4ba4a581c39531e2cfe9e1497da5a09b586e136f3ef26ececf1712d070de459",
+   "sha256": "b9a2cedb1322a7535d05449f0ab964d6b74944b5b68c0f4fb2b9405fa3e0f8ef",
+   "profile": "3e954be3",
+   "author_dir": "আহসান হাবীব",
+   "title": "154",
+   "npages": 27,
+   "pages": [
+    10,
+    13,
+    14,
+    16,
+    24
+   ],
+   "sel_prob": 0.2174,
+   "proof_available": true,
+   "era": "modern",
+   "quality_proxy": "noisy",
+   "length_band": "short",
+   "poetry_title": false,
+   "format": "pdf",
+   "source": "/scratch/pdf-craft/data/আহসান হাবীব/Unnmad/154.pdf"
+  },
+  {
+   "cell": [
+    "modern",
+    "noisy",
+    "long"
+   ],
+   "job_id": "cf2173c3ec3d8c5dd7acc0bab94a96df1efa789fc3a276000dafc95bfccfb84f",
+   "sha256": "7ded2dabb4521d062a391a39d5e7b7296a8f5f563186d2cf97273bfc86d1731b",
+   "profile": "9f23c684",
+   "author_dir": "সঙ্গীত",
+   "title": "(০৩) সঙ্গীত রত্নাকর - শ্রীনবীনচন্দ্র দত্ত Sangit Ratnakar",
+   "npages": 348,
+   "pages": [
+    62,
+    108,
+    172,
+    211,
+    232
+   ],
+   "sel_prob": 0.0145,
+   "proof_available": false,
+   "era": "modern",
+   "quality_proxy": "noisy",
+   "length_band": "long",
+   "poetry_title": false,
+   "format": "pdf",
+   "source": "/scratch/pdf-craft/data/সঙ্গীত/(০৩) সঙ্গীত রত্নাকর - শ্রীনবীনচন্দ্র দত্ত Sangit Ratnakar.pdf"
+  }
+ ]
+}

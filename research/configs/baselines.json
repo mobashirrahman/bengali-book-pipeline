@@ -1,0 +1,11 @@
+{
+  "b2_selection": "chosen on development data only, then digest+prompt frozen",
+  "adapters": [
+    {"adapter_id": "B0", "kind": "recognizer", "model_id": "tesseract-production", "prompt_id": "none", "prompt_hash": "none", "crop_policy": "none", "config": {"note": "unchanged production configuration"}},
+    {"adapter_id": "B1", "kind": "recognizer", "model_id": "bbocr-unpinned", "prompt_id": "none", "prompt_hash": "none", "crop_policy": "page_image", "config": {"status": "unavailable_pending_reproducible_build"}},
+    {"adapter_id": "B2", "kind": "recognizer", "model_id": "open-vlm-unpinned", "prompt_id": "vlm-transcribe-v0", "prompt_hash": "pending", "crop_policy": "page_image", "config": {"status": "select_on_dev_then_freeze"}},
+    {"adapter_id": "B3", "kind": "corrector", "model_id": "text-only-corrector", "prompt_id": "correct-textonly-v0", "prompt_hash": "pending", "crop_policy": "none", "config": {}},
+    {"adapter_id": "B4", "kind": "corrector", "model_id": "conservative-proofreader", "prompt_id": "repo-proofread", "prompt_hash": "repo", "crop_policy": "line_crop", "config": {"verifier": "tesseract-psm-8-13"}},
+    {"adapter_id": "B5", "kind": "corrector", "model_id": "evidence-gate", "prompt_id": "pending", "prompt_hash": "pending", "crop_policy": "line_crop", "config": {"abstain_on_missing_evidence": true}}
+  ]
+}
