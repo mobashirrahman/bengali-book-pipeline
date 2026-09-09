@@ -1971,19 +1971,51 @@ def has_volume_conflict(left_path: str, right_path: str) -> bool:
     return left != right
 
 
+def has_title_conflict(
+    left_key: str, right_key: str, *, fuzzy_threshold: float = 30.0
+) -> bool:
+    """True when two *resolved* titles are unrelated enough to rule out a match.
+
+    Content methods (page_image, sha256, text_minhash) know nothing about what
+    a book is about -- a page_image edge is just "these pages render alike".
+    When both sides have a title long enough to trust (see ``_MIN_TITLE_KEY``)
+    and those titles share almost nothing, that is real, independent evidence
+    the content match is a shared template rather than the same book. A short,
+    missing, or moderately-different title proves nothing either way and is
+    kept: as with the volume veto, a wrong veto only leaves a duplicate
+    unmerged, while a wrong merge deletes a book the user cannot get back.
+    ``token_set_ratio`` is used rather than a plain ratio so that a subtitle,
+    reordering, or an extra "by <author>" suffix on one side does not itself
+    look like a conflict.
+    """
+    if len(left_key) < _MIN_TITLE_KEY or len(right_key) < _MIN_TITLE_KEY:
+        return False
+    from rapidfuzz import fuzz
+
+    return fuzz.token_set_ratio(left_key, right_key) < fuzzy_threshold
+
+
 def apply_vetoes(
-    edges: list[DuplicateEdge], source_paths: dict[int, str]
+    edges: list[DuplicateEdge],
+    source_paths: dict[int, str],
+    title_keys: dict[int, str] | None = None,
 ) -> tuple[list[DuplicateEdge], int]:
-    """Drop content edges that a filename disagreement rules out.
+    """Drop content edges that a filename or title disagreement rules out.
 
     Metadata edges are left alone: they already carry the weakest claim and are
     never acted on, so vetoing them would only hide a genuine link.
     """
+    title_keys = title_keys or {}
     kept: list[DuplicateEdge] = []
     vetoed = 0
     for edge in edges:
-        if edge.method in CONTENT_METHODS and has_volume_conflict(
+        if edge.method not in CONTENT_METHODS:
+            kept.append(edge)
+            continue
+        if has_volume_conflict(
             source_paths.get(edge.left_id, ""), source_paths.get(edge.right_id, "")
+        ) or has_title_conflict(
+            title_keys.get(edge.left_id, ""), title_keys.get(edge.right_id, "")
         ):
             vetoed += 1
             continue

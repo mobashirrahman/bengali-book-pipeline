@@ -29,12 +29,14 @@ from pdf_craft.catalogue.dedupe import (
     DuplicateCluster,
     DuplicateEdge,
     apply_report,
+    apply_vetoes,
     analyze_run,
     assign_keepers,
     build_clusters,
     build_report,
     choose_keeper,
     classify_relation,
+    has_title_conflict,
     inventory_corpus,
     load_document_facts,
     load_report_file,
@@ -906,3 +908,62 @@ def test_load_document_facts_tolerates_malformed_json(tmp_path: Path) -> None:
     bad = qualities[by_path["/bad.pdf"]]
     assert (bad.has_title, bad.has_authors) == (False, False)
     conn.close()
+
+
+# --- Title-conflict veto -------------------------------------------------------
+#
+# A real false positive found in the live corpus: a page_image edge scoring
+# 0.8 (4 agreeing pages) linked a Samaresh Majumdar novel to unrelated books
+# by three other authors -- a scraper site's slightly-varying banner and
+# divider pages fell within the duplicate threshold every time. Content
+# methods (page_image, sha256, text_minhash) carry no idea what a book is
+# about; when both sides *do* have a resolved title and those titles share
+# nothing, that is real evidence the content match is wrong.
+
+
+def test_title_conflict_requires_both_titles_resolved():
+    # A short or missing title proves nothing either way -- kept, not guessed at.
+    assert has_title_conflict("", "raiders of the lost ark") is False
+    assert has_title_conflict("padma nadir majhi", "") is False
+    assert has_title_conflict("abc", "raiders of the lost ark") is False  # too short
+
+
+def test_title_conflict_flags_unrelated_titles():
+    # The real pair from the live corpus: a page_image edge (score 0.8, four
+    # agreeing pages) linked these two completely unrelated books.
+    assert has_title_conflict(
+        "honey moon e jemon hoy by shomoresh mojumdar meem pc",
+        "হেনা কাজী নজরুল ইসলাম",
+    ) is True
+
+
+def test_title_conflict_allows_near_matches():
+    # Same book, OCR noise/whitespace differences -- must not be vetoed.
+    assert has_title_conflict(
+        "ekti cycle ebong koyekti dahuk pakhi",
+        "ekti cycle ebong koyekti dahuk pakhi by humayun ahmed",
+    ) is False
+
+
+def test_apply_vetoes_drops_content_edges_with_conflicting_titles():
+    edges = [
+        DuplicateEdge(1, 2, "page_image", 0.8, {"pages_agreeing": 4}),
+        DuplicateEdge(3, 4, "metadata_exact", 1.0, {}),  # metadata edges are never vetoed
+    ]
+    title_keys = {
+        1: "honey moon e jemon hoy by shomoresh mojumdar",
+        2: "hena kazi nazrul islam",
+        3: "same title fragment here",
+        4: "unrelated title fragment there",
+    }
+    kept, vetoed = apply_vetoes(edges, {}, title_keys)
+    assert vetoed == 1
+    assert [edge.method for edge in kept] == ["metadata_exact"]
+
+
+def test_apply_vetoes_keeps_content_edges_with_matching_titles():
+    edges = [DuplicateEdge(1, 2, "page_image", 0.9, {"pages_agreeing": 5})]
+    title_keys = {1: "padma nadir majhi", 2: "padma nadir majhi manik"}
+    kept, vetoed = apply_vetoes(edges, {}, title_keys)
+    assert vetoed == 0
+    assert len(kept) == 1

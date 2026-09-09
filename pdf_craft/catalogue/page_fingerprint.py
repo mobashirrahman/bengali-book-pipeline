@@ -187,6 +187,60 @@ _MIN_DEDUPE_PAGES = 12
 _PAGE_COUNT_TOLERANCE = 0.02
 
 
+def _boilerplate_hashes(
+    fingerprints: dict[int, list[PageFingerprint]],
+    *,
+    threshold: int = DUPLICATE_THRESHOLD,
+    min_documents: int = 3,
+) -> set[int]:
+    """Page hashes that recur across many documents -- a template, not content.
+
+    Grouping by exact hash equality misses a banner or divider graphic that
+    recompresses slightly differently on every scrape: it never repeats a
+    literal hash, yet every instance of it still falls within ``threshold``
+    of every other instance, same as a genuine duplicate page would.  So the
+    grouping here uses the same near-duplicate test as content matching --
+    connected components under pairwise Hamming distance -- rather than exact
+    equality. A component contributed by fewer than ``min_documents`` distinct
+    documents is left alone: a page two documents happen to share by chance is
+    still real evidence, only three or more turns it into a template.
+    """
+    page_hash: dict[int, int] = {}
+    page_document: dict[int, int] = {}
+    synthetic_id = 0
+    for document_id, pages in fingerprints.items():
+        for page in pages:
+            page_hash[synthetic_id] = page.dhash
+            page_document[synthetic_id] = document_id
+            synthetic_id += 1
+    if not page_hash:
+        return set()
+
+    parent = list(range(len(page_hash)))
+
+    def find(node: int) -> int:
+        while parent[node] != node:
+            parent[node] = parent[parent[node]]
+            node = parent[node]
+        return node
+
+    for left, right, _distance in find_duplicate_pairs(page_hash, threshold=threshold):
+        root_left, root_right = find(left), find(right)
+        if root_left != root_right:
+            parent[root_left] = root_right
+
+    groups: dict[int, list[int]] = {}
+    for synthetic in page_hash:
+        groups.setdefault(find(synthetic), []).append(synthetic)
+
+    boilerplate: set[int] = set()
+    for members in groups.values():
+        documents = {page_document[member] for member in members}
+        if len(documents) >= min_documents:
+            boilerplate.update(page_hash[member] for member in members)
+    return boilerplate
+
+
 @dataclass(frozen=True)
 class DuplicatePair:
     left_id: int
@@ -208,17 +262,19 @@ def find_duplicate_documents(
 
     1. **Boilerplate rejection.** The scraper sites prepend a branded banner page
        to every file, so page 0 is identical across all books from one site --
-       309 documents shared a single granthagara template hash.  A page hash seen
-       in three or more documents is a template, not content, and is dropped.
+       309 documents shared a single granthagara template hash. A page seen
+       in three or more documents -- allowing the same near-duplicate slack
+       (``threshold``) as content matching, since a banner recompressed on
+       every scrape rarely hashes byte-identical twice -- is a template, not
+       content, and is dropped. An exact-hash-only count missed this: three
+       unrelated books were flagged as duplicates because their scraper
+       banner and section-divider pages fell within threshold of each other
+       every time without ever repeating a literal hash.
     2. **Page-count blocking.** See ``_PAGE_COUNT_TOLERANCE`` above.
     3. **Agreement.** One matching interior page is coincidence; two or more,
        between documents of the same length, is a duplicate.
     """
-    frequency: dict[int, int] = {}
-    for pages in fingerprints.values():
-        for page in pages:
-            frequency[page.dhash] = frequency.get(page.dhash, 0) + 1
-    boilerplate = {value for value, count in frequency.items() if count >= 3}
+    boilerplate = _boilerplate_hashes(fingerprints, threshold=threshold)
 
     usable: dict[int, list[int]] = {}
     for document_id, pages in fingerprints.items():

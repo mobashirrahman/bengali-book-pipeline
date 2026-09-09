@@ -98,6 +98,27 @@ def test_site_boilerplate_pages_are_ignored():
     assert find_duplicate_documents(fingerprints, counts) == []
 
 
+def test_near_duplicate_boilerplate_pages_are_ignored():
+    # A watermark or decorative banner that recompresses slightly differently
+    # on every scrape never repeats its EXACT hash, so an exact-match
+    # frequency count misses it entirely: three unrelated documents would
+    # count as duplicates because their two templated pages fall within
+    # DUPLICATE_THRESHOLD of one another every time, even though nothing else
+    # in the documents matches. This reproduces a real false positive found
+    # in the live corpus (page_image scored 0.8, "pages_agreeing": 4, between
+    # four completely unrelated books).
+    random.seed(9)
+    banner, divider = random.getrandbits(64), random.getrandbits(64)
+    unique = [random.getrandbits(64) for _ in range(3)]
+    fingerprints = {
+        1: _pages(banner, divider, unique[0]),
+        2: _pages(banner ^ 0b1, divider ^ 0b10, unique[1]),   # slightly different scan
+        3: _pages(banner ^ 0b100, divider ^ 0b1000, unique[2]),
+    }
+    counts = {1: 90, 2: 90, 3: 90}
+    assert find_duplicate_documents(fingerprints, counts) == []
+
+
 def test_uninformative_pages_are_ignored():
     blank = PageFingerprint(1, 12345, 2.0, False)
     real = PageFingerprint(2, 999, 60.0, True)
