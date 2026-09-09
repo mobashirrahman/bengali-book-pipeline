@@ -1,0 +1,8 @@
+{
+  "queue_db": "pdf-craft-output/cluster/queue.sqlite3",
+  "catalogue_db": "pdf-craft-output/catalogue/catalogue.db",
+  "dedupe_report": "pdf-craft-output/catalogue/dedupe-bio10-report-final.json",
+  "metadata_csv": "pdf-craft-output/extracted-metadata.csv",
+  "jobs_dir": "pdf-craft-output/cluster/jobs",
+  "data_root": "data"
+}
