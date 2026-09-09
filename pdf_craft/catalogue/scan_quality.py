@@ -73,7 +73,13 @@ def page_confidence(
         return (None, 0)
     try:
         completed = subprocess.run(
-            [TESSERACT_BINARY, str(image_path), "stdout", "-l", lang, "--psm", "3", "tsv"],
+            # TSV output is requested with -c rather than the "tsv" config
+            # file: the trimmed tessdata cache used for best-accuracy Bengali
+            # recognition ships only language data, no configs/ directory, so
+            # the config file can't be found and tesseract silently falls
+            # back to plain text -- wrong output at exit code 0, no error.
+            [TESSERACT_BINARY, str(image_path), "stdout", "-l", lang, "--psm", "3",
+             "-c", "tessedit_create_tsv=1"],
             capture_output=True,
             text=True,
             timeout=timeout,

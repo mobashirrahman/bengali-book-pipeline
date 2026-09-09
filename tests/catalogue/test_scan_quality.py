@@ -47,7 +47,11 @@ def test_page_confidence_parses_tsv_mean():
     assert mean == pytest.approx((90 + 60 + 30) / 3)
     argv = run.call_args.args[0]
     assert argv[:3] == [fake_binary, "/tmp/page.png", "stdout"]
-    assert "tsv" in argv
+    # TSV output is requested with the -c flag rather than the "tsv" config
+    # file: a config file can silently fail to be found (e.g. a tessdata
+    # cache with no configs/ directory) and tesseract falls back to plain
+    # text at exit code 0, with no error to catch.
+    assert "tessedit_create_tsv=1" in argv
 
 
 def test_page_confidence_rejects_thin_evidence():
