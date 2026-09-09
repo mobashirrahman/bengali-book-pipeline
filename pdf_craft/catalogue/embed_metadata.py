@@ -102,13 +102,31 @@ def embed_pdf(
     handle, temporary = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
     os.close(handle)
     try:
-        # incremental=True appends a small update section rather than
-        # regenerating the document, which is what keeps a 40MB scan from being
-        # re-encoded just to record its title.
-        # The source must be the positional argument here: with
-        # incremental=True pypdf reopens *fileobj* to copy the original bytes,
-        # and clone_from would leave it empty.
-        writer = PdfWriter(str(path), incremental=True)
+        from pypdf import PdfReader as _PdfReader
+
+        reader = _PdfReader(str(path))
+        if reader.is_encrypted:
+            # Incremental writes append new objects but cannot re-encrypt them
+            # against the document's existing encryption dictionary: the
+            # write "succeeds" but the /Title that comes back on reopen is
+            # silently empty. Nearly all of this corpus's encrypted PDFs use
+            # an empty user password purely to restrict printing/copying --
+            # anyone can already open and read them without one -- so
+            # decrypting to embed metadata exposes nothing a reader could
+            # not already see. A real (non-empty) user password is left
+            # untouched; that file simply fails below.
+            if reader.decrypt("") == 0:
+                raise ValueError("encrypted with a real password, cannot embed")
+            writer = PdfWriter()
+            writer.append(reader)
+        else:
+            # incremental=True appends a small update section rather than
+            # regenerating the document, which is what keeps a 40MB scan from
+            # being re-encoded just to record its title.
+            # The source must be the positional argument here: with
+            # incremental=True pypdf reopens *fileobj* to copy the original
+            # bytes, and clone_from would leave it empty.
+            writer = PdfWriter(str(path), incremental=True)
         writer.add_metadata(fields)
         with open(temporary, "wb") as target:
             writer.write(target)

@@ -41,6 +41,16 @@ def make_pdf(path, pages: int = 2):
     return path
 
 
+def make_encrypted_pdf(path, *, user_password: str = "", pages: int = 2):
+    writer = PdfWriter()
+    for _ in range(pages):
+        writer.add_blank_page(200, 200)
+    writer.encrypt(user_password=user_password, owner_password="ownersecret")
+    with open(path, "wb") as handle:
+        writer.write(handle)
+    return path
+
+
 def make_epub(path, opf: str = OPF):
     with zipfile.ZipFile(path, "w") as archive:
         info = zipfile.ZipInfo("mimetype")
@@ -98,6 +108,40 @@ def test_pdf_with_nothing_to_write_is_skipped(tmp_path):
 
 def test_missing_pdf_fails_without_raising(tmp_path):
     assert embed_pdf(tmp_path / "absent.pdf", title="T").status == FAILED
+
+
+def test_encrypted_pdf_with_empty_password_still_gets_a_title(tmp_path):
+    # Regression: an incremental write to an encrypted PDF "succeeds" but the
+    # /Title comes back empty on reopen, because pypdf cannot re-encrypt a
+    # newly appended string against the existing encryption dictionary. Most
+    # of this corpus's encrypted files use an empty user password purely to
+    # restrict printing/copying -- anyone can already open and read them --
+    # so decrypting to embed metadata is required, not optional.
+    path = make_encrypted_pdf(tmp_path / "book.pdf", user_password="")
+    result = embed_pdf(path, title="বাঁকা পথ", authors=["সৈয়দ ওয়ালীউল্লাহ্"])
+    assert result.status == WRITTEN
+    reader = PdfReader(str(path))
+    metadata = reader.metadata
+    assert metadata["/Title"] == "বাঁকা পথ"
+    assert metadata["/Author"] == "সৈয়দ ওয়ালীউল্লাহ্"
+
+
+def test_encrypted_pdf_pages_survive_the_write(tmp_path):
+    path = make_encrypted_pdf(tmp_path / "book.pdf", user_password="", pages=3)
+    embed_pdf(path, title="T")
+    assert len(PdfReader(str(path)).pages) == 3
+
+
+def test_encrypted_pdf_with_real_password_fails_without_touching_the_file(tmp_path):
+    # A genuine user password protects confidentiality, not just
+    # print/copy permissions -- this file must be left alone, not silently
+    # decrypted with a guess.
+    path = make_encrypted_pdf(tmp_path / "book.pdf", user_password="realpass")
+    original = path.read_bytes()
+    result = embed_pdf(path, title="T")
+    assert result.status == FAILED
+    assert "real password" in result.reason
+    assert path.read_bytes() == original
 
 
 def test_corrupt_pdf_is_refused_without_touching_the_file(tmp_path):
