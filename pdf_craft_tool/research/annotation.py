@@ -632,6 +632,11 @@ class AnnotationStore:
         with self._lock:
             return self._page_row(page_id)["status"]
 
+    def page_image_sha256(self, page_id: str) -> str:
+        """Frozen image hash for a page (read-only; no transcribed text)."""
+        with self._lock:
+            return self._page_row(page_id)["image_sha256"]
+
     def set_status(self, page_id: str, status: str) -> str:
         """Record a page-level status (e.g. ``flagged`` / ``provisional``).
 

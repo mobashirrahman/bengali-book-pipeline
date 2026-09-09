@@ -21,7 +21,12 @@
   </section>
   <p id="progress" class="progress" aria-live="polite"></p>
   <section id="image-area" class="image-area" aria-label="Page image">
-    <p>Page image placeholder: verify the frozen image hash before typing.</p>
+    <p class="hint">Transcribe exactly what is on this scan. Verify the frozen
+      hash below matches what you were given.</p>
+    <img id="page-image" alt="Page scan" hidden>
+    <p id="image-missing" class="status" hidden>No scan available on the
+      server for this page — do not transcribe from memory; tell the
+      coordinator.</p>
     <p id="image-hash" class="mono"></p>
   </section>
   <form id="lines-form">

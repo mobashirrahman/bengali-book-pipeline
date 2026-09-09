@@ -42,6 +42,25 @@ async function loadPage() {
   state.revision = payload.revision;
   document.getElementById("image-hash").textContent =
     `frozen image sha256: ${payload.image_sha256 || ""}`;
+  const image = document.getElementById("page-image");
+  const missing = document.getElementById("image-missing");
+  const imageUrl = `/api/page/${encodeURIComponent(state.pageId)}/image` +
+    `?token=${encodeURIComponent(state.token)}`;
+  try {
+    const probe = await fetch(imageUrl, { headers: headers() });
+    if (probe.ok) {
+      const blob = await probe.blob();
+      image.src = URL.createObjectURL(blob);
+      image.hidden = false;
+      missing.hidden = true;
+    } else {
+      image.hidden = true;
+      missing.hidden = false;
+    }
+  } catch (err) {
+    image.hidden = true;
+    missing.hidden = false;
+  }
   const lines = document.getElementById("lines");
   lines.innerHTML = "";
   for (const slot of payload.line_slots || []) {

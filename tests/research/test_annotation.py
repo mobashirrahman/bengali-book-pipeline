@@ -276,6 +276,85 @@ class AnnotationServerTests(unittest.TestCase):
                 server.shutdown()
                 server.server_close()
 
+    def _serve(self, app):
+        server = AnnotationHTTPServer(("127.0.0.1", 0), app)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return server
+
+    def test_image_route_serves_hash_checked_png(self):
+        import hashlib
+        png = (b"\x89PNG\r\n\x1a\n" + b"pilot-scan-bytes" * 4)
+        image_sha = hashlib.sha256(png).hexdigest()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            (tmp / "img").mkdir()
+            (tmp / "img" / f"{HASH_C}.png").write_bytes(png)
+            store = AnnotationStore(tmp / "annotation.sqlite3",
+                                    pages=[make_page(image=image_sha)])
+            app = AnnotationApp(store, image_dir=tmp / "img")
+            token = app.register_annotator("ann1")
+            adj = app.register_adjudicator("judge1")
+            server = self._serve(app)
+
+            def get(path, tok):
+                conn = http.client.HTTPConnection(
+                    "127.0.0.1", server.server_port, timeout=10)
+                try:
+                    conn.request("GET", path, headers={TOKEN_HEADER: tok})
+                    resp = conn.getresponse()
+                    return resp.status, resp.read()
+                finally:
+                    conn.close()
+
+            status, body = get(f"/api/page/{HASH_C}/image", token)
+            self.assertEqual(status, 200)
+            self.assertEqual(body, png)
+            # adjudicator may also fetch the scan
+            self.assertEqual(get(f"/api/page/{HASH_C}/image", adj)[0], 200)
+            # no token -> refused
+            self.assertEqual(get(f"/api/page/{HASH_C}/image", "")[0], 403)
+
+    def test_image_route_rejects_swapped_file(self):
+        import hashlib
+        png = b"\x89PNG\r\n\x1a\nthe-real-scan"
+        image_sha = hashlib.sha256(png).hexdigest()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            (tmp / "img").mkdir()
+            (tmp / "img" / f"{HASH_C}.png").write_bytes(b"a different image")
+            store = AnnotationStore(tmp / "annotation.sqlite3",
+                                    pages=[make_page(image=image_sha)])
+            app = AnnotationApp(store, image_dir=tmp / "img")
+            token = app.register_annotator("ann1")
+            server = self._serve(app)
+            conn = http.client.HTTPConnection(
+                "127.0.0.1", server.server_port, timeout=10)
+            try:
+                conn.request("GET", f"/api/page/{HASH_C}/image",
+                             headers={TOKEN_HEADER: token})
+                self.assertEqual(conn.getresponse().status, 409)
+            finally:
+                conn.close()
+
+    def test_image_route_404_when_no_image_dir(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = AnnotationStore(Path(tmpdir) / "annotation.sqlite3",
+                                    pages=[make_page()])
+            app = AnnotationApp(store)
+            token = app.register_annotator("ann1")
+            server = self._serve(app)
+            conn = http.client.HTTPConnection(
+                "127.0.0.1", server.server_port, timeout=10)
+            try:
+                conn.request("GET", f"/api/page/{HASH_C}/image",
+                             headers={TOKEN_HEADER: token})
+                self.assertEqual(conn.getresponse().status, 404)
+            finally:
+                conn.close()
+
     def test_non_loopback_host_refused(self):
         with self.assertRaises(SystemExit):
             from pdf_craft_tool.research.annotation_server import main

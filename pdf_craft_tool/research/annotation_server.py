@@ -15,6 +15,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import hashlib
 import hmac
 import json
 import secrets
@@ -26,21 +27,44 @@ from urllib.parse import parse_qs, urlsplit
 from .annotation import AnnotationStore, RevisionConflict
 
 MAX_REQUEST_BYTES = 2_000_000
+MAX_IMAGE_BYTES = 25_000_000
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 TOKEN_HEADER = "X-Annotation-Token"
 
 
 class AnnotationApp:
     def __init__(self, store: AnnotationStore, *,
-                 static_dir: Path | None = None):
+                 static_dir: Path | None = None,
+                 image_dir: Path | None = None):
         self.store = store
         self.static_dir = Path(
             static_dir if static_dir is not None
             else Path(__file__).parent / "static"
         )
+        self.image_dir = Path(image_dir) if image_dir is not None else None
         self._lock = threading.RLock()
         # token -> {"user_id": str, "role": "annotator" | "adjudicator"}
         self._tokens: dict[str, dict] = {}
+
+    def page_image(self, page_id: str) -> tuple[bytes, str]:
+        """Return ``(png_bytes, content_type)`` for a page's frozen scan.
+
+        The file ``<image_dir>/<page_id>.png`` is served only when its
+        sha256 matches the hash frozen in the store, so a swapped image is
+        rejected. Only the image bytes cross the wire -- never OCR/peer text.
+        """
+        if self.image_dir is None:
+            raise FileNotFoundError("no image directory configured")
+        expected = self.store.page_image_sha256(page_id)  # raises on unknown id
+        path = self.image_dir / f"{page_id}.png"
+        if not path.is_file():
+            raise FileNotFoundError(f"no image file for page {page_id}")
+        if path.stat().st_size > MAX_IMAGE_BYTES:
+            raise ValueError("page image exceeds the size limit")
+        data = path.read_bytes()
+        if hashlib.sha256(data).hexdigest() != expected:
+            raise ValueError("page image does not match the frozen hash")
+        return data, "image/png"
 
     def close(self) -> None:
         self.store.close()
@@ -121,6 +145,19 @@ class AnnotationRequestHandler(BaseHTTPRequestHandler):
             if route.path == "/api/session":
                 return self._json(self.app.session(self._token() or None))
             parts = route.path.strip("/").split("/")
+            if (len(parts) == 4 and parts[0:2] == ["api", "page"]
+                    and parts[2] and parts[3] == "image"):
+                identity = self.app.identity(self._token())
+                if identity is None or identity["role"] not in (
+                        "annotator", "adjudicator"):
+                    return self._error(403, "A valid token is required")
+                try:
+                    data, content_type = self.app.page_image(parts[2])
+                except FileNotFoundError as error:
+                    return self._error(404, str(error))
+                except ValueError as error:
+                    return self._error(409, str(error))
+                return self._send(200, data, content_type)
             if len(parts) == 3 and parts[0:2] == ["api", "page"] and parts[2]:
                 identity = self.app.identity(self._token())
                 if identity is None or identity["role"] != "annotator":
@@ -298,7 +335,10 @@ def build_app(args: argparse.Namespace) -> AnnotationApp:
         if not isinstance(pages, list):
             raise SystemExit("--pages must be a JSON list of page dicts")
     store = AnnotationStore(args.db, pages=pages)
-    app = AnnotationApp(store)
+    image_dir = getattr(args, "images", None)
+    if image_dir is not None and not Path(image_dir).is_dir():
+        raise SystemExit(f"--images {image_dir} is not a directory")
+    app = AnnotationApp(store, image_dir=image_dir)
     for name in args.annotators or []:
         print(f"annotator {name}: {app.register_annotator(name)}", flush=True)
     for name in args.adjudicators or []:
@@ -313,6 +353,9 @@ def main(argv=None) -> int:
                         help="private annotation SQLite file")
     parser.add_argument("--pages", type=Path,
                         help="JSON list of frozen page dicts (seed on first run)")
+    parser.add_argument("--images", type=Path, default=None,
+                        help="directory of <page_id>.png scans to serve "
+                             "(hash-checked against the frozen page)")
     parser.add_argument("--annotators", default="",
                         help="comma-separated annotator ids to mint tokens for")
     parser.add_argument("--adjudicators", default="",

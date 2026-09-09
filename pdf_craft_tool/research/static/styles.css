@@ -21,6 +21,14 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
   margin: 1rem 0;
   background: #fffdf6;
 }
+.image-area img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border: 1px solid #d8d0bf;
+  background: #fff;
+  margin-bottom: 0.75rem;
+}
 .mono { font-family: ui-monospace, monospace; font-size: 0.8rem; word-break: break-all; }
 .line-slot { margin: 0.75rem 0; }
 .line-slot label { display: block; font-size: 0.85rem; color: #5c5546; }
