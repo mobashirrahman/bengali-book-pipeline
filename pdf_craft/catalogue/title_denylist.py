@@ -19,6 +19,11 @@ Used only at embed time (embed_corpus.py): a denylisted title is treated the
 same as no title at all for that one document. The catalogue's own
 metadata_json is left untouched -- this is a filter on what gets written into
 the user's files, not a correction to the resolved data.
+
+The same file also holds ``clean_authors``, a companion filter for a related
+bug found auditing 22 documents where a resolved author entry is either a
+duplicate of the title itself or a volume/genre fragment mistaken for a name
+-- see the comment above ``DENYLISTED_AUTHORS`` for the detail.
 """
 
 from __future__ import annotations
@@ -69,3 +74,53 @@ DENYLISTED_TITLES: frozenset[str] = frozenset({
 
 def is_denylisted_title(title: str) -> bool:
     return title.strip() in DENYLISTED_TITLES
+
+
+# Verified 2026-09-09: 22 documents have an `authors` entry identical to the
+# document's own `title` (e.g. title "সুবোধ ঘোষ" with authors
+# ["সমগ্র ১", "সুবোধ ঘোষ"]) -- the cover-OCR resolver picked a person's name
+# as the title and duplicated that same name into the author list. Filtered
+# at embed time by dropping any author entry equal to the title (see
+# drop_title_duplicate_author below); no denylist needed for that half.
+#
+# The other half is a genuine second bug: on some of those same 22 documents,
+# the *other* author entry is a volume/genre fragment, not a name at all --
+# "সমগ্র ১"/"২"/.../"৮" ("Collection 1"/"2"/.../"8"), "রচনাসমগ্র-১"/"২"/"৩"
+# ("Collected Works-1"/"2"/"3"), "সংগ্রহ-২" ("Collection-2"),
+# "সংক্ষিপ্ত জীবনী" ("brief biography"). Embedding these as if they were a
+# co-author's name would be worse than embedding nothing. A few other
+# documents in the same 22 have a real second author/editor name in that
+# position (e.g. "জয় গোস্বামী ও অংশুমান কর") -- those are correct and stay.
+DENYLISTED_AUTHORS: frozenset[str] = frozenset({
+    "সমগ্র ১", "সমগ্র ২", "সমগ্র ৩", "সমগ্র ৪",
+    "সমগ্র ৫", "সমগ্র ৬", "সমগ্র ৭", "সমগ্র ৮",
+    "রচনাসমগ্র-১", "রচনাসমগ্র-২", "রচনাসমগ্র-৩",
+    "সংগ্রহ-২",
+    "সংক্ষিপ্ত জীবনী",
+})
+
+
+def is_denylisted_author(author: str) -> bool:
+    return author.strip() in DENYLISTED_AUTHORS
+
+
+def clean_authors(title: str, authors: list[str]) -> list[str]:
+    """Authors safe to embed alongside ``title``.
+
+    Drops any entry identical to the title itself (a resolver duplicate, not
+    a second author) and any entry on the volume/genre-fragment denylist
+    above. Order and any remaining duplicates among genuine names are left
+    alone -- this only removes entries known to be wrong.
+    """
+    title = title.strip()
+    cleaned = []
+    for author in authors:
+        stripped = author.strip()
+        if not stripped:
+            continue
+        if stripped == title:
+            continue
+        if is_denylisted_author(stripped):
+            continue
+        cleaned.append(stripped)
+    return cleaned
