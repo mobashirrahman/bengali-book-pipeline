@@ -187,3 +187,22 @@ rule report:
         ' --normalization "{config[normalization]}"'
         ' --license-reid "{config[license_reid]}" --license-mozhi "{config[license_mozhi]}"'
         " --output-report {output.report} --output-summary {output.summary} --output-meta {output.run_meta}"
+
+
+# Input directory for the showyourwork paper repo
+# (github.com/mobashirrahman/bengali-ocr-benchmark-paper): after a run,
+#   ./workflow/run.sh paper_inputs
+#   cd ../bengali-ocr-benchmark-paper && \
+#     PDF_CRAFT_RUN_DIR=$PWD/../pdf-craft/<WORK>/paper-inputs showyourwork build
+# Named target; not part of `all`.
+rule paper_inputs:
+    input:
+        rules.report.output.summary,
+        rules.report.output.run_meta,
+    output:
+        directory(WORK + "/paper-inputs"),
+    params:
+        inhouse=config.get("paper_inhouse_dir", "pdf-craft-output/benchmark/ocr-engines"),
+    shell:
+        "python3 {SCRIPTS}/export_paper_inputs.py --run-dir {WORK} --config workflow/config.yaml"
+        " --inhouse-dir {params.inhouse} --output {output}"
