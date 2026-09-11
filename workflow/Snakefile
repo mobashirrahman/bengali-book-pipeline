@@ -1,0 +1,189 @@
+# Bengali OCR benchmark: 4 engines x REID2019 + Mozhi-test.
+#
+# Invoke from the repo root:
+#   snakemake -s workflow/Snakefile --sdm conda --cores 1
+# Smoke test (2 REID pages + 20 Mozhi words per engine):
+#   snakemake -s workflow/Snakefile --sdm conda --cores 1 \
+#     --config run_name=smoke max_items_reid=2 max_items_mozhi=20
+#
+# Engine adapters share one CLI (workflow/scripts/common.py):
+# items JSON [{id, image}] -> hypotheses JSONL
+# {id, text, seconds, error, model_rev}, scored via score_split.py through
+# pdf_craft_tool.external_eval (repo-normalized micro CER/WER).
+
+configfile: "workflow/config.yaml"
+
+RUN = config["run_name"]
+WORK = config["output_root"].rstrip("/") + "/" + RUN
+ENGINES = config["engines"]
+SPLITS = ["reid", "mozhi-test"]
+SCRIPTS = "workflow/scripts"
+
+
+wildcard_constraints:
+    engine="tesseract|easyocr|easyocr-crnn|surya|bbocr|deepseekocr",
+    split="reid|mozhi-test",
+
+
+rule all:
+    input:
+        WORK + "/report.md",
+        WORK + "/summary.csv",
+        WORK + "/run_meta.json",
+
+
+rule verify_inputs:
+    input:
+        reid_zip=config["reid_zip"],
+        mozhi_test_zip=config["mozhi_test_zip"],
+        mozhi_val_zip=config["mozhi_val_zip"],
+    output:
+        WORK + "/inputs_meta.json",
+    conda:
+        "envs/benchmark.yaml"
+    shell:
+        "python {SCRIPTS}/check_inputs.py"
+        " --reid-zip {input.reid_zip} --mozhi-test-zip {input.mozhi_test_zip} --mozhi-val-zip {input.mozhi_val_zip}"
+        " --reid-dir {config[reid_dir]} --mozhi-test-dir {config[mozhi_test_dir]} --mozhi-val-dir {config[mozhi_val_dir]}"
+        " --output {output}"
+
+
+rule make_items:
+    input:
+        WORK + "/inputs_meta.json",
+    output:
+        WORK + "/items_{split}.json",
+    conda:
+        "envs/benchmark.yaml"
+    shell:
+        "python {SCRIPTS}/make_items.py --split {wildcards.split}"
+        " --reid-dir {config[reid_dir]} --mozhi-test-dir {config[mozhi_test_dir]}"
+        " --max-items-reid {config[max_items_reid]} --max-items-mozhi {config[max_items_mozhi]}"
+        " --output {output}"
+
+
+rule run_tesseract:
+    input:
+        WORK + "/items_{split}.json",
+    output:
+        WORK + "/hypotheses_tesseract_{split}.jsonl",
+    conda:
+        "envs/benchmark.yaml"
+    shell:
+        "python {SCRIPTS}/run_tesseract.py --items {input} --output {output} --split {wildcards.split}"
+        " --timeout {config[timeout_tesseract]}"
+        " --tesseract-bin {config[tesseract_bin]} --tessdata-dir {config[tessdata_dir]}"
+        " --lang {config[tesseract_lang]} --oem {config[tesseract_oem]}"
+        " --psm-reid {config[psm_reid]} --psm-mozhi {config[psm_mozhi]}"
+
+
+rule run_easyocr:
+    input:
+        WORK + "/items_{split}.json",
+    output:
+        WORK + "/hypotheses_easyocr_{split}.jsonl",
+    conda:
+        "envs/easyocr.yaml"
+    resources:
+        gpu=1,
+    shell:
+        "python {SCRIPTS}/run_easyocr.py --items {input} --output {output} --split {wildcards.split}"
+        " --timeout {config[timeout_easyocr]} --device {config[easyocr_device]}"
+
+
+rule run_surya:
+    input:
+        WORK + "/items_{split}.json",
+    output:
+        WORK + "/hypotheses_surya_{split}.jsonl",
+    conda:
+        "envs/surya.yaml"
+    resources:
+        gpu=1,
+    shell:
+        "python {SCRIPTS}/run_surya.py --items {input} --output {output} --split {wildcards.split}"
+        " --timeout {config[timeout_surya]} --backend {config[surya_backend]}"
+        " --batch-pages {config[surya_batch_pages]} --batch-crops {config[surya_batch_crops]}"
+
+
+rule run_bbocr:
+    input:
+        WORK + "/items_{split}.json",
+    output:
+        WORK + "/hypotheses_bbocr_{split}.jsonl",
+    conda:
+        "envs/bbocr.yaml"
+    shell:
+        "python {SCRIPTS}/run_bbocr.py --items {input} --output {output} --split {wildcards.split}"
+        " --timeout {config[timeout_bbocr]} --batch {config[bbocr_batch]} --device {config[bbocr_device]}"
+
+
+rule run_easyocr_crnn:
+    input:
+        WORK + "/items_{split}.json",
+    output:
+        WORK + "/hypotheses_easyocr-crnn_{split}.jsonl",
+    conda:
+        "envs/easyocr.yaml"
+    resources:
+        gpu=1,
+    shell:
+        "python {SCRIPTS}/run_easyocr.py --items {input} --output {output} --split {wildcards.split}"
+        " --timeout {config[timeout_easyocr]} --device {config[easyocr_device]}"
+        " --recog-network {config[crnn_recog_network]} --user-network-directory {config[crnn_dir]}"
+
+
+rule run_deepseekocr:
+    input:
+        WORK + "/items_{split}.json",
+    output:
+        WORK + "/hypotheses_deepseekocr_{split}.jsonl",
+    conda:
+        "envs/deepseekocr.yaml"
+    resources:
+        gpu=1,
+    shell:
+        "python {SCRIPTS}/run_deepseekocr.py --items {input} --output {output} --split {wildcards.split}"
+        " --timeout {config[timeout_deepseekocr]} --weights-dir {config[deepseekocr_weights]}"
+        ' --prompt-page "{config[deepseekocr_prompt_page]}" --prompt-crop "{config[deepseekocr_prompt_crop]}"'
+        " --base-size {config[deepseekocr_base_size]} --image-size {config[deepseekocr_image_size]}"
+        " --dtype {config[deepseekocr_dtype]} --quantize {config[deepseekocr_quantize]}"
+
+
+def _score_files(_wildcards):
+    return [f"{WORK}/scores_{e}_{s}.json" for e in ENGINES for s in SPLITS]
+
+
+rule score:
+    input:
+        refs=WORK + "/items_{split}.json",
+        hyp=WORK + "/hypotheses_{engine}_{split}.jsonl",
+    output:
+        WORK + "/scores_{engine}_{split}.json",
+    conda:
+        "envs/benchmark.yaml"
+    shell:
+        "python {SCRIPTS}/score_split.py --engine {wildcards.engine} --split {wildcards.split}"
+        " --reid-dir {config[reid_dir]} --mozhi-test-dir {config[mozhi_test_dir]}"
+        " --items {input.refs} --hyp {input.hyp} --output {output}"
+
+
+rule report:
+    input:
+        scores=_score_files,
+        meta=WORK + "/inputs_meta.json",
+    output:
+        report=WORK + "/report.md",
+        summary=WORK + "/summary.csv",
+        run_meta=WORK + "/run_meta.json",
+    conda:
+        "envs/benchmark.yaml"
+    params:
+        engines=" ".join(ENGINES),
+        splits=" ".join(SPLITS),
+    shell:
+        "python {SCRIPTS}/make_report.py --scores {input.scores} --meta {input.meta}"
+        ' --engines {params.engines} --splits {params.splits}'
+        ' --normalization "{config[normalization]}"'
+        ' --license-reid "{config[license_reid]}" --license-mozhi "{config[license_mozhi]}"'
+        " --output-report {output.report} --output-summary {output.summary} --output-meta {output.run_meta}"

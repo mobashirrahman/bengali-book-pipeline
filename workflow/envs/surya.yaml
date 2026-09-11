@@ -1,0 +1,17 @@
+# Created by `workflow/run.sh` (snakemake --sdm conda) or manually:
+#   conda env create -f workflow/envs/surya.yaml
+# Backend is llamacpp (no docker on this host, no vLLM): the VLM runs in the
+# external `llama-server` binary (Vulkan, see run.sh LLAMA_CPP_BINARY), so
+# torch CUDA is NOT required here — CPU torch is fine for the small
+# detector/layout helpers. Do NOT add vllm (pulls CUDA-13 torch, unusable on
+# the 550-series driver) or pin torch (surya-ocr>=2.7 metadata conflicts with
+# cu124 torch, which this host would need for torch-side CUDA).
+name: bnch-surya
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+    - "surya-ocr==0.22.1"
+    - pillow

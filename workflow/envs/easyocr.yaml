@@ -1,0 +1,18 @@
+# Created by `workflow/run.sh` (snakemake --sdm conda) or manually:
+#   conda env create -f workflow/envs/easyocr.yaml
+# torch cu124 matches this host's 550-series driver (cu126+ needs R560+).
+# PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cu124 must be set
+# when this env is created (see workflow/run.sh).
+name: bnch-easyocr
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+    - "torch==2.6.0+cu124"
+    - "torchvision==0.21.0+cu124"
+    - "numpy<2"
+    - "easyocr==1.7.2"
+    - pillow
+    - opencv-python-headless

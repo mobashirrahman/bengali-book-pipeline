@@ -1,0 +1,28 @@
+# Created by `workflow/run.sh` (snakemake --sdm conda) or manually:
+#   conda env create -f workflow/envs/deepseekocr.yaml
+# torch cu124 matches this host's 550-series driver (cu126+ needs R560+).
+# PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cu124 must be set
+# when this env is created (see workflow/run.sh).
+# transformers 4.47.* matches the version proven with doc-page-extractor
+# 1.2.0 in this repo; escalate only if DeepSeek-OCR-2's custom modeling code
+# demands newer APIs (see VRAM/API spike notes in run_deepseekocr.py).
+name: bnch-deepseekocr
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+    - "torch==2.6.0+cu124"
+    - "torchvision==0.21.0+cu124"
+    - "numpy<2"
+    - "transformers==4.47.*"
+    - pillow
+    - safetensors
+    - huggingface_hub
+    - opencv-python-headless
+    - addict
+    - einops
+    # 8-bit LM weights: the only configuration that fits an 8 GB card.
+    - "bitsandbytes>=0.45"
+    - "accelerate>=1.2"

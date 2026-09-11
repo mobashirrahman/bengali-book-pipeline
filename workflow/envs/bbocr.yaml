@@ -1,0 +1,17 @@
+# bbOCR / APSIS-Net (apsisocr 0.0.7). CPU onnxruntime; full-page detection
+# additionally tries fastdeploy (best effort — Mozhi crops via ApsisNet do
+# not need it). Upstream tests python 3.9.
+name: bnch-bbocr
+channels:
+  - conda-forge
+dependencies:
+  - python=3.9
+  - pip
+  - pip:
+    - "apsisocr==0.0.7"
+    - onnxruntime
+    - fastdeploy-python  # page-level DBNet detector backend (CPU)
+    - opencv-python-headless
+    - pillow
+    - "numpy==1.23.0"
+    - bnunicodenormalizer

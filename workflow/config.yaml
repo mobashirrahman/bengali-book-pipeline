@@ -1,0 +1,72 @@
+# All paths are repo-root-relative. Override on the CLI, e.g.:
+#   snakemake -s workflow/Snakefile --sdm conda --cores 1 \
+#     --config run_name=smoke max_items_reid=2 max_items_mozhi=20
+run_name: full
+output_root: pdf-craft-output/external-eval/runs
+engines: [tesseract, easyocr, easyocr-crnn, surya, bbocr, deepseekocr]
+
+# Pinned inputs (staged 2026-09-07; zips are the canonical copies)
+reid_zip: pdf-craft-output/external-eval/REID2019.zip
+reid_dir: pdf-craft-output/external-eval/reid/REID2019/Competition_dataset_ImagesPAGEXML
+mozhi_test_zip: pdf-craft-output/external-eval/mozhi-test.zip
+mozhi_test_dir: pdf-craft-output/external-eval/mozhi/test/test
+mozhi_val_zip: pdf-craft-output/external-eval/mozhi-val.zip
+mozhi_val_dir: pdf-craft-output/external-eval/mozhi/val/val
+
+# 0 = all items (smoke overrides these via --config)
+max_items_reid: 0
+max_items_mozhi: 0
+
+# Per-item timeouts (seconds)
+timeout_tesseract: 120
+timeout_easyocr: 180
+timeout_surya: 600
+timeout_bbocr: 300
+timeout_deepseekocr: 600
+
+# Tesseract (external binary; runs inside the lightweight benchmark env)
+tesseract_bin: /scratch/mdra00001/conda/envs/ocrbench/bin/tesseract
+tessdata_dir: /scratch/mdra00001/conda/envs/ocrbench/share/tessdata
+tesseract_lang: ben
+tesseract_oem: 1
+psm_reid: 3
+psm_mozhi: 8
+
+# EasyOCR
+easyocr_device: cuda  # or cpu
+
+# Surya OCR 2 (llamacpp backend: external llama-server binary, Vulkan GPU).
+# No docker on this host, so the vllm/docker backend is unavailable.
+# Pages use full-page mode; Mozhi crops use block mode with a synthetic
+# full-image Text layout (page-prompt returns empty on tiny crops).
+surya_backend: llamacpp
+surya_batch_pages: 1
+surya_batch_crops: 8
+
+# bbOCR / APSIS-Net (CPU onnxruntime; pages need fastdeploy detector)
+bbocr_batch: 32
+bbocr_device: cpu
+
+# EasyOCR-CRNN variant (third-party unvetted weights, MIT).
+# crnn_run_dir holds symlinks: bengali_crnn.py/.yaml/.pth + craft detector,
+# serving as both model_storage_directory and user_network_directory.
+crnn_dir: pdf-craft-output/external-eval/easyocr-crnn-run
+crnn_recog_network: bengali_crnn
+
+# DeepSeek-OCR v2 (local weights, fp16; prompts recorded verbatim in provenance)
+deepseekocr_weights: models-cache/models--deepseek-ai--DeepSeek-OCR-2
+deepseekocr_prompt_page: "Free OCR."
+deepseekocr_prompt_crop: "Free OCR."
+deepseekocr_base_size: 1024
+# v2 only has learned query grids for 768 px crops / 1024 px global views
+# (640 raises UnboundLocalError('param_img')). bf16 is required by the vendor
+# infer(); full-precision weights OOM on 8 GB, so the LM is loaded LLM.int8
+# (vision encoder/projector/lm_head stay bf16). See run_deepseekocr.py.
+deepseekocr_image_size: 768
+deepseekocr_dtype: bfloat16
+deepseekocr_quantize: 8bit
+
+# Report provenance (quoted as one shell word)
+normalization: "NFC, curly apostrophes folded, whitespace collapsed; L/M/N word tokens (pdf_craft_tool.benchmark.score)"
+license_reid: "public domain / CC0 (heiDATA DOI 10.11588/DATA/AIQSXL)"
+license_mozhi: "CC BY 4.0 (NLTM IIIT)"
