@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bengali-book-pipeline"
+version = "0.1.0"
+description = "Bengali/Bangla book-digitization pipeline built on the pdf-craft fork: cluster OCR processing, a book catalogue, gold-standard dataset tooling, manual review, and an OCR-comparison research study."
+license = {text = "MIT"}
+authors = [{name = "Md Mobashir Rahman", email = "mobashirrahman@gmail.com"}]
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "pdf-craft @ git+https://github.com/mobashirrahman/pdf-craft.git",
+    "pypdf>=6.6.0,<7.0.0",
+    "cryptography>=3.1",
+    "pillow>=10.0.0,<13.0.0",
+    "pydantic>=2.12.5,<3.0.0",
+    "rapidfuzz>=3.0.0,<4.0.0",
+    "httpx>=0.27.0,<1.0.0",
+    "fastapi>=0.115.0,<1.0.0",
+    "uvicorn>=0.30.0,<1.0.0",
+    "numpy>=1.26.0,<3.0.0",
+]
+
+[project.optional-dependencies]
+# Only needed for the Postgres catalogue backend; SQLite is the default and
+# needs no extra.
+postgres = ["psycopg[binary]>=3.2.0,<4.0.0"]
+# Only needed to run the local OCR engines (DeepSeek/Unlimited) through the
+# pdf-craft dependency, on a CUDA-capable GPU.
+local = ["pdf-craft[local] @ git+https://github.com/mobashirrahman/pdf-craft.git"]
+
+[project.urls]
+Repository = "https://github.com/mobashirrahman/bengali-book-pipeline"
+"pdf-craft fork" = "https://github.com/mobashirrahman/pdf-craft"
+
+[tool.setuptools.packages.find]
+include = ["catalogue*", "pdf_craft_tool*"]
+
+[tool.pytest.ini_options]
+markers = ["integration: tests requiring CATALOGUE_POSTGRES_DSN"]
