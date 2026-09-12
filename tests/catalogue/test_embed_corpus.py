@@ -122,7 +122,7 @@ def _make_catalogue(tmp_path: Path):
 
 def test_denylisted_title_authors_still_embedded(catalogue, tmp_path):
     fake = FakeEmbed()
-    counts = driver.run(catalogue, tmp_path / "audit.db", live=True, embed=fake)
+    counts = driver.run(catalogue, tmp_path / "audit.db", live=True, embed=fake, isolate=False)
 
     call_two = next(c for c in fake.calls if c["path"].endswith("books/two.pdf"))
     assert call_two["title"] == ""
@@ -135,7 +135,7 @@ def test_denylisted_title_authors_still_embedded(catalogue, tmp_path):
 
 def test_no_title_no_authors_is_never_embedded(catalogue, tmp_path):
     fake = FakeEmbed()
-    driver.run(catalogue, tmp_path / "audit.db", live=True, embed=fake)
+    driver.run(catalogue, tmp_path / "audit.db", live=True, embed=fake, isolate=False)
 
     paths = [c["path"] for c in fake.calls]
     assert not any(p.endswith("books/three.pdf") for p in paths)
@@ -147,7 +147,7 @@ def test_no_title_no_authors_is_never_embedded(catalogue, tmp_path):
 
 def test_default_is_dry_run_and_audits_would_be_outcome(catalogue, tmp_path):
     fake = FakeEmbed()
-    driver.run(catalogue, tmp_path / "audit.db", live=False, embed=fake)
+    driver.run(catalogue, tmp_path / "audit.db", live=False, embed=fake, isolate=False)
 
     assert fake.calls, "dry run must still call embed_document"
     assert all(c["dry_run"] is True for c in fake.calls)
@@ -160,7 +160,7 @@ def test_default_is_dry_run_and_audits_would_be_outcome(catalogue, tmp_path):
 def test_written_documents_are_not_reprocessed(catalogue, tmp_path):
     audit_db = tmp_path / "audit.db"
     fake = FakeEmbed()
-    driver.run(catalogue, audit_db, live=True, embed=fake)
+    driver.run(catalogue, audit_db, live=True, embed=fake, isolate=False)
     assert len(fake.calls) == 3
 
     rows = audit_rows(audit_db)
@@ -169,7 +169,7 @@ def test_written_documents_are_not_reprocessed(catalogue, tmp_path):
     assert json.loads(rows[1]["authors_written"]) == ["বঙ্কিমচন্দ্র চট্টোপাধ্যায়"]
 
     fake_again = FakeEmbed()
-    counts = driver.run(catalogue, audit_db, live=True, embed=fake_again)
+    counts = driver.run(catalogue, audit_db, live=True, embed=fake_again, isolate=False)
     assert fake_again.calls == [], "second run must not re-call embed_document"
     assert counts.already_written == 3
     assert counts.processed == 0
@@ -178,7 +178,7 @@ def test_written_documents_are_not_reprocessed(catalogue, tmp_path):
 def test_limit_processes_only_first_n_eligible(catalogue, tmp_path):
     fake = FakeEmbed()
     counts = driver.run(catalogue, tmp_path / "audit.db", live=True,
-                        limit=1, embed=fake)
+                        limit=1, embed=fake, isolate=False)
     assert counts.processed == 1
     assert len(fake.calls) == 1
     assert fake.calls[0]["path"].endswith("books/one.pdf")
@@ -272,23 +272,34 @@ def test_progress_is_committed_before_the_run_finishes(tmp_path, monkeypatch):
         monitor.close()
         return result
 
-    driver.run(db, audit_path, live=True, embed=spying_call, commit_every=2)
+    driver.run(db, audit_path, live=True, embed=spying_call, commit_every=2, isolate=False)
     # By the time the 3rd document is processed, the first commit_every=2
     # batch must already be visible to an outside reader.
     assert seen_mid_run[2] >= 2
 
 
 def test_main_reports_and_exits_zero(tmp_path, capsys, monkeypatch):
-    fake = FakeEmbed()
-    monkeypatch.setattr(driver, "embed_document", fake)
+    # main() always runs isolated (no --isolate flag exists on purpose: a
+    # real corpus run must never be talked out of the timeout protection),
+    # so this goes through the same forked path production does -- verified
+    # via stdout and the audit db, not a shared-state fake's .calls, which
+    # a forked child can't make visible to this process.
+    monkeypatch.setattr(driver, "embed_document", FakeEmbed())
+    audit_db = tmp_path / "a.db"
     code = driver.main([
         "--dry-run", "--limit", "2",
         "--catalogue", str(_make_catalogue(tmp_path)),
-        "--audit", str(tmp_path / "a.db"),
+        "--audit", str(audit_db),
     ])
     out = capsys.readouterr().out
     assert code == 0
     assert "mode=dry-run" in out
     assert "done:" in out
     assert "written=0" in out
-    assert all(c["dry_run"] is True for c in fake.calls)
+    rows = audit_rows(audit_db)
+    # --limit 2 bounds eligible-processed documents (both dry-run "would
+    # write"); the catalogue's ineligible 3rd document is recorded too
+    # (ineligibility doesn't consume the limit) but never calls embed.
+    dry_run_rows = [row for row in rows.values() if row["reason"] == "dry run"]
+    assert len(dry_run_rows) == 2
+    assert all(row["status"] == "SKIPPED" for row in dry_run_rows)
