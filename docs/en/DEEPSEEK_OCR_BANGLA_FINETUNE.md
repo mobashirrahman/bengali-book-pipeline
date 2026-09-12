@@ -35,6 +35,7 @@ OCR engine in our benchmark (`workflow/`, paper repo
 |---|---|
 | Zero-shot, Mozhi crops (37-item probe, 8-bit, 768 grid) | 238–446% CER. Output is LaTeX/Latin hallucination under all three prompts. |
 | Zero-shot, REID pages on the RTX 2060 Super 8 GB | No successful page: OOM or timeout in every configuration. The pipeline's `cer 1.0` means 51/51 errors, not a measurement. |
+| S0: `rifathridoy/bangla_deepseek_ocr_2` (see S0 below) | Fails. Fluent Bengali output, but unrelated to the image: 158% CER on the crop probe, 92% on 3 REID pages, and 0/20 exact on its own synthetic validation split. |
 | Tokenizer | Byte-level BPE, lossless round-trip. About 860 merges decode to Bengali. Bengali averages 2.21 chars/token vs 5.47 for English, so sequences are about 2.5× longer. Not a blocker. |
 
 ## Evidence from comparable adaptations
@@ -49,7 +50,8 @@ OCR engine in our benchmark (`workflow/`, paper repo
 
 **Existing Bangla fine-tunes on Hugging Face.** Neither publishes any CER
 figure:
-- `rifathridoy/bangla_deepseek_ocr_2`: Unsloth merge, Apache-2.0.
+- `rifathridoy/bangla_deepseek_ocr_2`: Unsloth merge, Apache-2.0. We probed
+  it in S0 and it does not read Bengali (details under S0).
 - `NafisAshraf/deepseek_ocr-synthdog_bangla_100k-fft`: DeepSeek-OCR-2
   architecture, full fine-tune on SynthDoG-Bangla, no licence.
 
@@ -95,8 +97,32 @@ In-house pages must never reach public artifacts.
 1. **S0: probe an existing Bangla fine-tune** (local, once the pipeline frees
    the GPU). Run `rifathridoy/bangla_deepseek_ocr_2` on the 37-crop probe and
    5 REID pages. **Go if:** crop CER is under 50% and there's no LaTeX output.
+
+   **Result (2026-09-11): no-go for this checkpoint.** Setup: official
+   DeepSeek-OCR-2 code with the fine-tune's weights (same 2,707 tensor names,
+   identical tokenizer), 8-bit language model, base 1024 / image 768, crop
+   mode. The uploader's own modeling code was not run: it swaps Unsloth's
+   `ast.literal_eval` for `eval()` on model output.
+
+   | Test | Fine-tune | Base (same config) | Reference |
+   |---|---|---|---|
+   | 37 Mozhi crops, "Free OCR." | 158.3% CER, 0 exact | 365.5% | bbOCR 1.0% |
+   | 37 Mozhi crops, training prompt "OCR this Bengali text." | 115.5% CER, 0 exact | — | — |
+   | 20 crops from its own synthetic validation split, training prompt | 100.6% CER, 0/20 exact | — | — |
+   | 3 REID pages, no crop mode | 92.4% CER | out of memory | Surya 8.6%, EasyOCR 13.2%, Tesseract 28.1% |
+   | 5 rendered English crops (pipeline control) | 5/5 exact | 5/5 exact | — |
+
+   The English control rules out our load path. The cause is in the weights:
+   only the language model changed (attention and MoE experts, about 0.3%
+   relative), while all 298 vision-encoder tensors and the projector are
+   bit-identical to the base model. A language-only LoRA taught the decoder to
+   write Bengali, not the encoder to see it. This does not block S1, but it
+   sets a hard requirement for it. Artifacts are in
+   `pdf-craft-output/agents/probe_s0_rifathridoy/`.
 2. **S1: word-crop LoRA** (Colab T4, 1–2 h). Use the Unsloth v2 notebook with
-   2k Mozhi-train crops plus 2k synthetic crops, 60–500 steps. Evaluate on
+   2k Mozhi-train crops plus 2k synthetic crops, 60–500 steps. **Train the
+   vision layers too** (`finetune_vision_layers=True`); S0 shows a
+   language-only LoRA does not learn to read. Evaluate on
    Mozhi **val**. **Go if:** CER is under 13.4% (beats Surya on crops).
    **Stretch:** under 1.3%.
 3. **S2: page-level LoRA.** Train on 10–45k synthetic HarfBuzz pages plus the

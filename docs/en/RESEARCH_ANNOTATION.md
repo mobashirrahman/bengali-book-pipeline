@@ -8,7 +8,8 @@ Status: **draft, pilot phase.** Companion to
 
 These guidelines produce a **diplomatic transcription** — what is on the page,
 not a corrected or modernised reading. Two annotators work independently and
-blind; a third adjudicates. No machine draft (Tesseract, Qwen, any VLM) is shown
+blind; a third adjudicates. A fourth person, the coverage reviewer, owns the
+census. No machine draft (Tesseract, Qwen, any VLM) is shown
 to an annotator, ever.
 
 ## 1. Roles and flow
@@ -19,12 +20,26 @@ to an annotator, ever.
    marginalia, captions and catchwords. This census is independent of any OCR
    output, so text the OCR dropped is still captured.
 2. **Transcription (both annotators, independent, blind).** Transcribe each
-   census line from the image only.
-3. **Conflict detection (software).** Lines where the two transcriptions differ
+   census line from its region crop only — the crop is the only page view a
+   transcriber gets — one region at a time; sittings
+   may be as short as a single region. Drafts persist per region and are
+   visible only to their author — the coordinator sees nothing until a page
+   is submitted whole. Crops carry padding so neighbouring line edges stay
+   visible. Either annotator may
+   still report text the census missed as a dragged rectangle; reports stay
+   private until the coverage reviewer triages them.
+3. **Coverage (fourth person).** The coverage reviewer checks every page on
+   the full scan for text the census missed or boxes it cut wrong, triages
+   missed-text reports, and signs off checked censuses. They never see
+   transcripts and never transcribe or adjudicate. Approved census fixes
+   append regions and reopen finished assignments as drafts (saved texts
+   kept) so both annotators confirm and resubmit. Coverage runs concurrent
+   with transcription — no page waits for sign-off.
+4. **Conflict detection (software).** Lines where the two transcriptions differ
    (after NFC) become adjudication items.
-4. **Adjudication (third person).** Resolve each conflict against the image;
+5. **Adjudication (third person).** Resolve each conflict against the image;
    record the reason. The adjudicator may mark a line `unreadable`.
-5. **Export (software).** Only a page whose every line is `adjudicated` and whose
+6. **Export (software).** Only a page whose every line is `adjudicated` and whose
    status is `final` with ≥2 annotators and a named adjudicator is exported as
    gold. `provisional` and `flagged` pages never export.
 

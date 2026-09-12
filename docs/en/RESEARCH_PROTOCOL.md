@@ -134,6 +134,13 @@ compared numerically to full-page scores.
   are frozen before main-study annotation.
 - Independent spot audits inspect agreements as well as disagreements.
 
+**Amendment 2026-09-10 (process only; endpoints and metrics unchanged):**
+transcription moved to one padded region crop at a time — the crop is the
+transcribers' only page view; a fourth role, the coverage reviewer, owns the
+census (triage + sign-off, concurrent with transcription, no transcript
+access). Rationale: phone-sized sittings without losing the omission
+endpoint. Blindedness rules above apply unchanged to the new role.
+
 ## 7. Leakage and provenance rules (enforced in software)
 
 - Gold text is a scoring input only. Inference manifests and evaluation

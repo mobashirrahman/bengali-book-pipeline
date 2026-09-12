@@ -112,14 +112,22 @@ did the review and when. The census reviewer **may** be one of the annotators
 ```bash
 set -a; source .env; set +a   # only if the venv needs it; server itself needs nothing
 
+printf 'anno-1:....\nanno-2:....\njudge-1:....\ncover-1:....\n' > /tmp/pilot-pins.txt
+chmod 600 /tmp/pilot-pins.txt   # one private channel per person for their PIN
+
 .venv/bin/python -m pdf_craft_tool.research.annotation_server \
     --db  pdf-craft-output/research/pilot-study/annotation.sqlite3 \
     --pages pdf-craft-output/research/pilot-study/annotation_pages.json \
     --images pdf-craft-output/research/pilot-study/pages \
     --annotators anno-1,anno-2 \
     --adjudicators judge-1 \
+    --coverage cover-1 \
+    --pin-file /tmp/pilot-pins.txt \
     --host 127.0.0.1 --port 8767
 ```
+
+Region crops are cached under `<db-dir>/crops/` (override with
+`--crop-cache`); the directory is git-ignored runtime state.
 
 - The DB filename must **not** be `gold.sqlite3` or `queue.sqlite3` (the store
   refuses those). Keep it on bio10 local disk.
@@ -131,6 +139,15 @@ set -a; source .env; set +a   # only if the venv needs it; server itself needs n
 - The server prints one token per annotator and per adjudicator on startup.
   **Give each person only their own token, over a private channel.** Tokens are
   in memory only — every restart mints new ones.
+- With `--pin-file`, annotators log in with their name + short PIN instead
+  (phone-friendly); the printed tokens remain as a coordinator fallback.
+  Sessions are in-memory — a restart means logging in again. Ten wrong PINs
+  lock an account for five minutes.
+- Pages resolve as short `pilot-01`…`pilot-60` aliases (deterministic from
+  sorted page ids; logged at startup) as well as full hashes. Each annotator
+  gets a personal page picker (`GET /api/my-pages`) showing only their own
+  per-page status — no coordinator handout needed, nothing about the other
+  annotator leaks.
 - The server binds `127.0.0.1` and refuses any non-loopback `--host`.
 
 ### How the team connects
@@ -149,27 +166,85 @@ Only the coordinator runs the server; annotators never start their own.
 
 ## 3. Annotator workflow (each of the two, independently)
 
-1. Open `http://127.0.0.1:8767/`, paste your token and a `page_id`
-   (the coordinator hands out the page list from `sample_manifest.json`).
-2. The scan loads above the transcription boxes. Confirm the **frozen image
-   sha256** shown matches the one the coordinator gave you. If the scan does
-   not load, stop — do not transcribe from memory; tell the coordinator.
-3. Transcribe each region into its box, following
+1. Open `http://127.0.0.1:8767/`, log in with your name + PIN, and pick a
+   page (`pilot-NN`) from your personal list, which also shows your own
+   per-page progress.
+2. The scan loads with every census region outlined; the region you are
+   transcribing is highlighted amber. Confirm the **frozen image sha256**
+   shown matches the one the coordinator gave you. If the scan does not
+   load, stop — do not transcribe from memory; tell the coordinator.
+   Transcribers work from one **region crop** at a time (padded, so
+   neighbouring line edges stay visible) — no scrolling through the tall
+   page, and no full-page view: the crop is all a transcriber ever sees.
+   On wide screens the crop sits beside a sticky transcription panel;
+   on narrow screens the panel sits below with a sticky action bar.
+   Double-tap (or `Zoom in`) magnifies; touch works throughout.
+3. Work through the regions **one at a time**: type the highlighted region's
+   text into the single box, following
    [`RESEARCH_ANNOTATION.md`](RESEARCH_ANNOTATION.md) (guideline `annot-1`):
    diplomatic transcription, source spelling, Bengali digits, mark illegible
-   text, never guess, never paste from any OCR or model output.
-4. Submit. You never see the other annotator's text, any OCR draft, any
-   candidate correction, or any agreement statistic — the server payload does
-   not carry them.
-5. Work through the full 60. The `progress` line shows counts only.
+   text, never guess, never paste from any OCR or model output. `Save & next`
+   stores a draft and moves on; `Save & stop` stores a draft and ends the
+   sitting. Reloading the page restores your own drafts — the other
+   annotator's text, any OCR draft, any candidate correction, and any
+   agreement statistic never appear.
+4. A sitting can be as short as one region. Only `Submit page`, with every
+   region filled, completes the assignment. Until then the coordinator sees
+   nothing — no counts, no text.
+5. If the scan shows readable text with **no outline box** (the census missed
+   it): toggle `Report missed text`, drag a rectangle around the missed text
+   (touch supported), confirm in the inline form with an optional note, and
+   send. The proposal goes to a reviewer; it becomes a transcription box
+   only after approval. Keep transcribing the outlined regions meanwhile.
 
-You do **not** need to finish all 60 in one sitting; assignments persist. Each
-submit is optimistic-locked on a revision number; a stale submit is rejected
-and you reload.
+You do **not** need to finish a page in one sitting; drafts persist per
+region. Each save is optimistic-locked on a revision number; a stale save is
+rejected and you reload (your typed text stays in the boxes).
 
 ---
 
 ## 4. Adjudicator workflow (third person)
+
+### 4a. Missed-text triage (any time)
+
+Pending proposals are listed at `GET /api/proposals?status=pending`
+(adjudicator token; the on-page reviewer panel calls this). For each item,
+open its page, compare the proposed rectangle against the scan, then approve
+or reject (rejection needs a reason):
+
+```bash
+curl -s -X POST -H "X-Annotation-Token: $JUDGE" \
+  -H 'Content-Type: application/json' \
+  -d '{"decision":"approve"}' \
+  http://127.0.0.1:8767/api/proposals/<id>/review
+```
+
+Approval appends a census region (next index; reading order re-derived
+top-to-bottom, left-to-right) and reopens finished assignments on that page
+as drafts — saved texts are kept, but both annotators must confirm and
+resubmit. You cannot approve your own report. Proposals on
+`flagged`/`provisional` pages are refused.
+
+### 4b. Coverage review (fourth person, `cover-1`)
+
+The coverage reviewer owns the census while transcribers work the crops —
+missed text is their job to catch, not the transcribers'. Log in with the
+coverage name + PIN, open `Load coverage queue`, and work page by page:
+
+1. Open the page: full scan with census outlines, pending proposal boxes,
+   and the current sign-off state.
+2. Triage proposals (approve appends a region and reopens drafts, as in
+   §4a) and drag boxes for anything the census missed — the same
+   propose/review rules apply, except the reviewer here cannot be the
+   reporter.
+3. `Sign off census` when the page is fully checked (withdraw anytime).
+   Approval of a later proposal resets the sign-off. Sign-off is a pilot-log
+   record, not a gate: transcribers start without waiting for it.
+
+The coverage reviewer never sees transcripts and never transcribes or
+adjudicates (all three refuse with 403).
+
+### 4c. Conflict adjudication
 
 For each page once **both** annotators have submitted:
 

@@ -10,6 +10,9 @@ Renderer、Pipeline 和 Transformer。
 poetry run python -m pdf_craft_tool --help
 ```
 
+Bangla 扫描书 OCR、Qwen 3.5 本地校对和可恢复批处理的完整英文说明见
+[`docs/en/BANGLA_BATCH_WORKFLOW.md`](../docs/en/BANGLA_BATCH_WORKFLOW.md)。
+
 先复制 `.env.template` 为 `.env`，一次性填写全部六种 `PDF_CRAFT_*` OCR 配置；切换
 backend 时不需要再修改 `.env`。翻译
 翻译或可选的 TOC 层级增强需要文本 chat-completion LLM profile；OCR-only endpoint
@@ -192,3 +195,62 @@ poetry run python -m pdf_craft_tool smoke matrix \
 
 该矩阵会对每个 backend 分别报告 `passed`、`failed` 或 `skipped`。无 CUDA 的 local
 backend 应明确 `skipped`；不要把它当作 vendor backend 的失败或成功。
+
+# Bengali OCR + proofreading + EPUB/Markdown
+
+The opt-in `book` command provides Tesseract OCR, source-corroborated LLM edits,
+restartable stages, EPUB 3 and source-linked Markdown chunks. See the
+[Bengali book pipeline guide](../docs/en/BENGALI_BOOK_PIPELINE.md) for setup,
+commands, benchmarks and limitations.
+
+## Manual OCR review
+
+After completed cluster jobs have been collected locally, launch the foreground,
+loopback-only review card UI from the repository root:
+
+```shell
+python -m pdf_craft_tool.review_server --cluster-root pdf-craft-output/cluster
+```
+
+The first launch freezes at most 1,000 audit entries in
+`pdf-craft-output/cluster/review/manifest.json` and resumes labels in the
+separate `review.sqlite3`. Use `--cap`, `--manifest`, `--review-db`, or
+`--review-root` to override those paths. The browser can download verified or
+complete JSONL exports from the buttons; no server/service is installed.
+
+## Gold line adjudication
+
+Line-level ground truth for OCR benchmarking (`gold_tasks.py`,
+`gold_store.py`, `gold_server.py`, `gold_static/`). Tasks are single
+Tesseract text lines with an optional Qwen-derived draft; the line crop image
+is the only source of truth. Adjudication is gamified (XP, streak bonus,
+levels) and exports verified JSONL plus `tesstrain` PNG + `.gt.txt` pairs.
+
+```shell
+python -m pdf_craft_tool.gold_server --book-root pdf-craft-output/<book-work-dir> \
+  --cap 1000 --sample mixed
+```
+
+The first launch freezes the manifest in `<book-root>/gold/manifest.json`
+and resumes labels in `gold.sqlite3`. `--sample mixed|random|suspicious|all`
+controls sampling; `mixed` deliberately combines low-confidence and clean
+lines. Offline tesstrain export:
+
+```shell
+python -m pdf_craft_tool.gold_server --manifest <book-work-dir>/gold/manifest.json --export-tesstrain ./gold-train
+```
+
+## External Bengali eval splits
+
+`external_eval.py` adapts third-party references for engine benchmarking:
+BL REID2019 historical pages (PAGE XML, public domain) and Mozhi-Bengali
+word images (CC BY 4.0). Data lives in git-ignored
+`pdf-craft-output/external-eval/`; scoring reuses `benchmark.score` so the
+numbers compare directly with gold-split results.
+
+```shell
+# list references, then score a hypotheses JSONL ({id, text} per line)
+python -m pdf_craft_tool.external_eval --reid-dir pdf-craft-output/external-eval/reid \
+  --mozhi-dir pdf-craft-output/external-eval/mozhi/test/test
+python -m pdf_craft_tool.external_eval --reid-dir ... --hypotheses hyps.jsonl --output scores.json
+```
