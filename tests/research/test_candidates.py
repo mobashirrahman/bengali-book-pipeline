@@ -114,10 +114,15 @@ class ProposalTests(unittest.TestCase):
         # image codec, not a model: the annotation server uses it lazily for
         # region-crop serving, so it is excluded from the runtime check but
         # stays forbidden as a top-level import of the proposer modules.
+        #
+        # The sys.modules check is a before/after diff, not an absolute
+        # absence check: pdf_craft's own dependency chain (e.g. HF Hub
+        # tooling behind doc-page-extractor) can legitimately load `requests`
+        # as a side effect of an unrelated test importing pdf_craft earlier
+        # in the same process, and that must not fail this test.
         forbidden_runtime = ("torch", "transformers", "ollama", "requests")
         forbidden_imports = forbidden_runtime + ("PIL",)
-        for name in forbidden_runtime:
-            self.assertNotIn(name, sys.modules)
+        already_loaded = set(sys.modules) & set(forbidden_runtime)
         repo_root = Path(__file__).resolve().parents[2]
         for module in ("adapters.py", "runners.py", "candidates.py"):
             source = (
@@ -137,8 +142,8 @@ class ProposalTests(unittest.TestCase):
             page_id=HEX_A, base_field="ocr",
             ocr_text="আমি বই পড়ি", alt_text="আমি খই পড়ি",
             proposer_id="disagree-v0", bank_seed="seed-1")
-        for name in forbidden_runtime:
-            self.assertNotIn(name, sys.modules)
+        newly_loaded = (set(sys.modules) & set(forbidden_runtime)) - already_loaded
+        self.assertEqual(newly_loaded, set())
 
 
 if __name__ == "__main__":
