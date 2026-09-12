@@ -7,14 +7,18 @@ baselines: research/configs/baselines.json
 # Loopback port for THIS study's annotation server. The pilot preview serves
 # on 8767; the main study takes 8768 so both can run side by side.
 annotate_port: 8768
-# Execution toolchain (absolute paths: rules call these pythons directly
-# instead of duplicating the benchmark conda envs via --sdm conda).
+# Execution toolchain. Rules call these pythons directly instead of
+# duplicating the benchmark conda envs via --sdm conda, so the OCR-engine
+# entries must be overridden for your machine, e.g.:
+#   --config easyocr_python=/path/to/envs/easyocr/bin/python \
+#            surya_python=/path/to/envs/surya/bin/python \
+#            tesseract_bin=/path/to/tesseract tessdata_dir=/path/to/tessdata_best
 venv_python: .venv/bin/python
-easyocr_python: /scratch/mdra00001/conda/envs/bnch-easyocr/bin/python
-surya_python: /scratch/mdra00001/conda/envs/bnch-surya/bin/python
-easyocr_model_dir: /scratch/pdf-craft/models-cache/easyocr
-tesseract_bin: /scratch/mdra00001/conda/envs/ocrbench/bin/tesseract
-tessdata_dir: /scratch/mdra00001/conda/envs/ocrbench/share/tessdata
+easyocr_python: CHANGE_ME_easyocr_python
+surya_python: CHANGE_ME_surya_python
+easyocr_model_dir: models-cache/easyocr
+tesseract_bin: tesseract
+tessdata_dir: CHANGE_ME_tessdata_dir
 tesseract_psm: 3
 # EasyOCR voter config. GPU is first choice; cpu+full-canvas is the recorded
 # fallback while the lab GPU is occupied (canvas 1280 and quantize-only

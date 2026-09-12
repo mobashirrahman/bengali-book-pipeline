@@ -59,7 +59,7 @@ association. The output directory must be new. The command exports EPUB,
 Markdown, source-mapped chunks, effective `metadata.json`, publication settings,
 SHA-256 seals and `validation.json`. Chunking needs the existing tokenizer cache;
 on this deployment set
-`TIKTOKEN_CACHE_DIR=/scratch/pdf-craft-worker-mdra00001/tokenizer-cache`.
+`TIKTOKEN_CACHE_DIR=/path/to/pdf-craft-worker/tokenizer-cache`.
 No OCR runtime, Ollama server, GPU or model download is required.
 Pass `--epubcheck /path/to/epubcheck.jar` to require conformance checking before
 the new output directory is published.
@@ -112,7 +112,7 @@ tail -n 20 pdf-craft-output/cluster/publications.log
 To run a single scan manually, first stop the publication service, then run:
 
 ```bash
-TIKTOKEN_CACHE_DIR=/scratch/pdf-craft-worker-mdra00001/tokenizer-cache \
+TIKTOKEN_CACHE_DIR=/path/to/pdf-craft-worker/tokenizer-cache \
   .venv/bin/python -m pdf_craft_tool.publication_queue \
   --config pdf-craft-output/cluster-config.json --once
 ```

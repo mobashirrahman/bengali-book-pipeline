@@ -4,12 +4,13 @@ Benchmark Tesseract OCR (Bengali) over pages in manifest.
 """
 
 import json
+import os
 import subprocess
 import time
 import sys
 from pathlib import Path
 
-TESSERACT_BIN = Path("/scratch/mdra00001/conda/envs/ocrbench/bin/tesseract")
+TESSERACT_BIN = Path(os.environ.get("TESSERACT_BIN", "tesseract"))
 TESSDATA_DIR = Path("pdf-craft-output/benchmark/ocr-engines/tessdata")
 MANIFEST_PATH = Path("pdf-craft-output/benchmark/ocr-engines/manifest.json")
 OUTPUT_PATH = Path("pdf-craft-output/benchmark/ocr-engines/results_tesseract.jsonl")

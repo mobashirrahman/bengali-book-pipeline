@@ -85,7 +85,7 @@ systemctl --user start pdf-craft-cluster.service
 ```
 
 Per-host setup and transfer errors are in `cluster/logs/bioNN.log`. Remote runtime
-and job files live in `/scratch/pdf-craft-worker-mdra00001`, with current progress
+and job files live in `/path/to/pdf-craft-worker`, with current progress
 in `worker-state.json`. SSH interruption preserves remote work. A worker crash is
 recorded as a failed attempt and retried with backoff; existing completed page and
 model-response caches are reused.
@@ -104,8 +104,8 @@ ollama pull qwen3-vl:4b-instruct
 
 .venv/bin/python -m pdf_craft_tool book "sample_book/sarat upannays.pdf" \
   --work-dir pdf-craft-output/vision-evaluation --pages 4-13 \
-  --tesseract /scratch/pdf-craft-worker-mdra00001/tesseract/bin/tesseract \
-  --tessdata /scratch/pdf-craft-worker-mdra00001/tessdata \
+  --tesseract /path/to/pdf-craft-worker/tesseract/bin/tesseract \
+  --tessdata /path/to/pdf-craft-worker/tessdata \
   --model qwen3-vl:4b-instruct --vision-proofread --review-only
 ```
 
@@ -146,7 +146,7 @@ and ensure the systemd unit's working directory points to its new frozen release
   --config pdf-craft-output/cluster-config.json \
   --repo /scratch/pdf-craft --data-root data \
   --state-root pdf-craft-output/cluster \
-  --seed-root /scratch/pdf-craft-worker-mdra00001
+  --seed-root /path/to/pdf-craft-worker
 ```
 
 For a separate visual evaluation fleet, use a separate configuration/state root,

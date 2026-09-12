@@ -23,9 +23,11 @@ timeout_easyocr: 180
 timeout_surya: 600
 timeout_bbocr: 300
 
-# Tesseract (external binary; runs inside the lightweight benchmark env)
-tesseract_bin: /scratch/mdra00001/conda/envs/ocrbench/bin/tesseract
-tessdata_dir: /scratch/mdra00001/conda/envs/ocrbench/share/tessdata
+# Tesseract (external binary; runs inside the lightweight benchmark env).
+# Both must be overridden for your machine, e.g.:
+#   --config tesseract_bin=/path/to/tesseract tessdata_dir=/path/to/tessdata_best
+tesseract_bin: tesseract
+tessdata_dir: CHANGE_ME_tessdata_dir
 tesseract_lang: ben
 tesseract_oem: 1
 psm_reid: 3

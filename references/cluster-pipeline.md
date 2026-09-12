@@ -32,7 +32,7 @@ bounded JSON trial; do not treat reasoning-channel text as an accepted answer.
 - Host provisioning/transfer logs: same directory, `logs/bioNN.log`.
 - Results: same directory, `jobs/<job-id>/summary.json` and `work/`.
 - Immutable source snapshots: same directory, `releases/<release-hash>/`.
-- Per-node runtime and work: `/scratch/pdf-craft-worker-mdra00001/`.
+- Per-node runtime and work: `/path/to/pdf-craft-worker/`.
 - Per-node current state: `worker-state.json`; job logs/results under `jobs/<id>/`.
 - Service: `pdf-craft-cluster.service`, linked to the unit file in `pdf-craft-output/`.
 - User lingering was already enabled, so the user service survives logout.

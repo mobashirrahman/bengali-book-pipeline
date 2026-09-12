@@ -28,18 +28,21 @@ SAMPLE_PAGES: int = 3
 # genuinely measured ones.
 MIN_WORDS: int = 20
 
-# The cluster worker ships its own Tesseract build, which must win over any
+# A cluster worker may ship its own Tesseract build, which must win over any
 # system binary so that local runs and cluster runs score scans identically.
-_WORKER_TESSERACT = "/scratch/pdf-craft-worker-mdra00001/tesseract/bin/tesseract"
+# Point this at that build with SCAN_QUALITY_WORKER_TESSERACT; unset, only
+# the system binary on PATH is used.
+_WORKER_TESSERACT = os.environ.get("SCAN_QUALITY_WORKER_TESSERACT", "")
 
-# The best-accuracy Bengali trained data lives outside the worker image, so it
-# is picked up only where that cache directory has actually been provisioned.
-_TESSDATA_DIR = "/scratch/pdf-craft/models-cache/tesseract-best"
+# The best-accuracy Bengali trained data may live outside the worker image;
+# point SCAN_QUALITY_TESSDATA_DIR at it. Picked up only if the directory has
+# actually been provisioned.
+_TESSDATA_DIR = os.environ.get("SCAN_QUALITY_TESSDATA_DIR", "")
 
 
 def find_tesseract() -> str | None:
     """Locate the Tesseract binary, preferring the cluster worker build."""
-    if os.path.isfile(_WORKER_TESSERACT) and os.access(_WORKER_TESSERACT, os.X_OK):
+    if _WORKER_TESSERACT and os.path.isfile(_WORKER_TESSERACT) and os.access(_WORKER_TESSERACT, os.X_OK):
         return _WORKER_TESSERACT
     return shutil.which("tesseract")
 

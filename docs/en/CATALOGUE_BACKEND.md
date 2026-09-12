@@ -140,7 +140,7 @@ System `sudo` is not available on the development host, so PostgreSQL is
 installed in user space rather than as an Ubuntu service:
 
 ```bash
-PGROOT=/scratch/mdra00001/conda/envs/pdf-craft-postgres
+PGROOT=/path/to/conda/envs/pdf-craft-postgres
 PGDATA=/scratch/pdf-craft/pdf-craft-output/catalogue/postgres
 
 "$PGROOT/bin/pg_ctl" -D "$PGDATA" \
@@ -231,7 +231,7 @@ The clean local database used for the current generated collection is
 `pdf_craft_catalogue`:
 
 ```bash
-PGROOT=/scratch/mdra00001/conda/envs/pdf-craft-postgres
+PGROOT=/path/to/conda/envs/pdf-craft-postgres
 "$PGROOT/bin/createdb" -h 127.0.0.1 -p 55432 pdf_craft_catalogue
 python -m catalogue.cli postgres-init \
   --dsn postgresql://127.0.0.1:55432/pdf_craft_catalogue
