@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gold Line Adjudication</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div><span class="eyebrow">BENGALI GOLD LAB</span><h1>Tesseract vs Qwen — you judge</h1></div>
+      <div class="hud">
+        <div class="hud-row"><span id="xp">0 XP</span><span id="level">নবীন</span><span id="streak">🔥 0</span></div>
+        <div class="progress-wrap"><span id="progress-label">Loading…</span><progress id="progress" max="100" value="0"></progress></div>
+        <div class="hud-row small"><span id="pace">— lines/h</span><span id="verified-count"></span></div>
+      </div>
+    </header>
+    <section class="policy panel">
+      <strong>Ground-truth policy:</strong> read the <em>image only</em>.
+      Preserve old spelling, names, punctuation and numbers. NFC Unicode.
+      Never guess — <strong>Flag</strong> unreadable lines. Drafts A/B are untrusted.
+    </section>
+    <section id="empty" class="panel hidden"><h2>All caught up ✨</h2><p>Every frozen line has a label. Export verified JSONL or tesstrain pairs when ready.</p></section>
+    <section id="card" class="card hidden">
+      <div class="card-head"><div><span id="title" class="eyebrow"></span><h2 id="entry-label">Line</h2></div><span id="saved" class="saved">Not saved</span></div>
+      <div class="source-frame"><img id="crop" alt="Source line crop"><div id="crop-unavailable" class="unavailable hidden">Source crop unavailable — text review is still possible.</div></div>
+      <div class="text-grid">
+        <div class="text-panel"><label>A · Tesseract <span id="conf-a" class="conf"></span></label><pre id="cand-a"></pre><button id="fill-a" class="link">Use A ⏎</button></div>
+        <div class="text-panel suggestion"><label>B · Qwen <span id="conf-b" class="conf"></span></label><pre id="cand-b"></pre><button id="fill-b" class="link">Use B ⏎</button></div>
+      </div>
+      <details id="context" class="context"><summary>Paragraph context (Qwen worked at this level)</summary><div class="text-grid"><div class="text-panel"><label>Paragraph OCR</label><pre id="ctx-a"></pre></div><div class="text-panel"><label>Paragraph Qwen</label><pre id="ctx-b"></pre></div></div></details>
+      <label class="final-label" for="verified">Verified line text <span>(editable — this becomes gold)</span></label>
+      <textarea id="verified" spellcheck="false" lang="bn"></textarea>
+      <div class="actions">
+        <button data-decision="tesseract" class="keep">1 · A correct</button>
+        <button data-decision="qwen" class="apply">2 · B correct</button>
+        <button data-decision="manual" class="manual">3 · Save edit</button>
+        <button data-decision="flag" class="flag">F · Flag ⚑</button>
+        <button data-decision="skip" class="quiet">S · Skip ↓</button>
+      </div>
+      <div class="sub-actions"><button id="back" class="link" disabled>↶ Revisit previous</button><a href="/api/export?kind=verified">Export verified</a><a href="/api/export?kind=all">Export all</a><span id="hint">Keys: 1 A · 2 B · 3 edit · F flag · S skip</span></div>
+    </section>
+    <div id="toast" role="status"></div>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>
