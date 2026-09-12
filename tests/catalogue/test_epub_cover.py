@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import zipfile
 
-from pdf_craft.catalogue.epub_cover import extract_epub_cover
+from catalogue.epub_cover import extract_epub_cover
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\ncover-bytes"
 JPEG_BYTES = b"\xff\xd8\xffcover-bytes"

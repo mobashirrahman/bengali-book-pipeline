@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pdf_craft.catalogue.matching import (
+from catalogue.matching import (
     fuzzy_match_score,
     find_best_match,
     infer_author_from_path,

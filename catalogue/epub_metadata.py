@@ -1,6 +1,6 @@
 """EPUB-embedded Dublin Core metadata extraction for catalogue matching.
 
-The matcher in :mod:`pdf_craft.catalogue.resolution` falls back to guessing
+The matcher in :mod:`catalogue.resolution` falls back to guessing
 from file paths when ``metadata_json`` is empty, so this module fills that
 dict from the EPUB files themselves.  It parses the OPF package document
 with the standard library only and never guesses: absent fields are omitted.

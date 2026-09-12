@@ -1,6 +1,6 @@
-"""Tests for pdf_craft.catalogue.text_normalize."""
+"""Tests for catalogue.text_normalize."""
 
-from pdf_craft.catalogue.text_normalize import (
+from catalogue.text_normalize import (
     fold_bengali,
     normalize_name,
     normalize_text,

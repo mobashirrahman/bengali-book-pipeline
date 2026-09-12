@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pdf_craft.catalogue.database import CatalogueDB
-from pdf_craft.catalogue.importers.rokomari import (
+from catalogue.database import CatalogueDB
+from catalogue.importers.rokomari import (
     import_rokomari_from_file,
     stage_rokomari_from_file,
 )

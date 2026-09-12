@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from pdf_craft.catalogue.cli import _non_negative_int, cmd_cover, cmd_resolve_local
-from pdf_craft.catalogue.database import CatalogueDB
+from catalogue.cli import _non_negative_int, cmd_cover, cmd_resolve_local
+from catalogue.database import CatalogueDB
 
 
 def test_cover_register_url_dry_run_does_not_create_database(tmp_path: Path) -> None:

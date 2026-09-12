@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import httpx
 
-from pdf_craft.catalogue.importers.open_library import cover_url, search_open_library
+from catalogue.importers.open_library import cover_url, search_open_library
 
 
 def test_open_library_search_parses_work_and_edition(monkeypatch) -> None:

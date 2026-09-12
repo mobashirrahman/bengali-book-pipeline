@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 from pypdf import PdfWriter
 
-from pdf_craft.catalogue import metadata_manifest as manifest
+from catalogue import metadata_manifest as manifest
 
 
 def _write_pdf(path: Path, *, title: str | None = None,
@@ -250,7 +250,7 @@ def test_cover_index_feeds_three_signal_resolution(tmp_path: Path) -> None:
 def test_manifest_cli_wires_defer_list_and_cover_index(tmp_path: Path, capsys) -> None:
     import argparse
 
-    from pdf_craft.catalogue.cli import cmd_metadata_manifest
+    from catalogue.cli import cmd_metadata_manifest
 
     corpus = tmp_path / "corpus"
     corpus.mkdir()

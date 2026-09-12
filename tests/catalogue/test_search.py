@@ -3,9 +3,9 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from pdf_craft.catalogue.database import CatalogueDB
-from pdf_craft.catalogue.search import get_book_stats, rebuild_fts_index, search_books
-from pdf_craft.catalogue.models import Book
+from catalogue.database import CatalogueDB
+from catalogue.search import get_book_stats, rebuild_fts_index, search_books
+from catalogue.models import Book
 
 
 class TestSearch:

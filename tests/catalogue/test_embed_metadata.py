@@ -13,7 +13,7 @@ import zipfile
 import pytest
 from pypdf import PdfReader, PdfWriter
 
-from pdf_craft.catalogue.embed_metadata import (
+from catalogue.embed_metadata import (
     FAILED,
     SKIPPED,
     WRITTEN,

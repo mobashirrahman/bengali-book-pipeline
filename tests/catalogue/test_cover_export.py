@@ -8,8 +8,8 @@ from pathlib import Path
 from PIL import Image
 from pypdf import PdfWriter
 
-from pdf_craft.catalogue import cover_export
-from pdf_craft.catalogue import metadata_manifest as manifest
+from catalogue import cover_export
+from catalogue import metadata_manifest as manifest
 
 
 def _write_pdf(path: Path) -> Path:

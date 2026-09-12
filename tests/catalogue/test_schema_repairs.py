@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from pdf_craft.catalogue.database import CatalogueDB
+from catalogue.database import CatalogueDB
 
 
 def test_version_two_partial_database_replays_catalogue_ddl(tmp_path: Path) -> None:

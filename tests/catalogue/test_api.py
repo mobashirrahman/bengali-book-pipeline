@@ -5,8 +5,8 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from pdf_craft.catalogue.api.app import init_app
-from pdf_craft.catalogue.database import CatalogueDB
+from catalogue.api.app import init_app
+from catalogue.database import CatalogueDB
 
 
 def _database(path: Path) -> tuple[int, int, int, int]:

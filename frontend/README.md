@@ -8,7 +8,7 @@ Start the catalogue API first, from the repository root, using the existing
 normalized database and the approved `epub-staging` content root:
 
 ```bash
-.venv/bin/python -m pdf_craft.catalogue.cli serve \
+.venv/bin/python -m catalogue.cli serve \
   --db pdf-craft-output/catalogue/catalogue.db \
   --content-root pdf-craft-output/catalogue/epub-staging \
   --host 127.0.0.1 --port 8000

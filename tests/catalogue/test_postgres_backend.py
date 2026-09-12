@@ -6,9 +6,9 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from pdf_craft.catalogue.api.app import init_app
-from pdf_craft.catalogue.database import CatalogueDB
-from pdf_craft.catalogue.postgres import (
+from catalogue.api.app import init_app
+from catalogue.database import CatalogueDB
+from catalogue.postgres import (
     _MIGRATIONS,
     POSTGRES_SCHEMA_VERSION,
     PostgresCatalogueDB,
@@ -17,7 +17,7 @@ from pdf_craft.catalogue.postgres import (
     postgres_status,
     resolve_postgres_dsn,
 )
-from pdf_craft.catalogue.transfer import transfer_sqlite_to_postgres
+from catalogue.transfer import transfer_sqlite_to_postgres
 
 
 def test_postgres_dsn_resolution_is_explicit(monkeypatch: pytest.MonkeyPatch) -> None:

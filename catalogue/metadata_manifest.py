@@ -3,8 +3,8 @@
 The manifest is a JSON file mapping each inventoried source path to an
 accepted ``title``/``authors`` pair plus the unresolved candidates and the
 per-field evidence that produced them.  It is the single input to cover
-export (:mod:`pdf_craft.catalogue.cover_export`) and safe embedding
-(:mod:`pdf_craft.catalogue.metadata_embed`).
+export (:mod:`catalogue.cover_export`) and safe embedding
+(:mod:`catalogue.metadata_embed`).
 
 Design rules, all machine-checkable in ``tests/catalogue/``:
 

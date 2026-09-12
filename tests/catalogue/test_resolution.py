@@ -3,12 +3,12 @@ from pathlib import Path
 
 import pytest
 
-from pdf_craft.catalogue import CatalogueDB, CatalogueFoundation, generate_candidates
-from pdf_craft.catalogue.importers.google_books import stage_google_books_response
-from pdf_craft.catalogue.isbn import normalize_isbn, normalize_isbn10
-from pdf_craft.catalogue.matching import normalize_bengali, title_sort_key
-from pdf_craft.catalogue.materialization import materialize_source_records
-from pdf_craft.catalogue.resolution import (
+from catalogue import CatalogueDB, CatalogueFoundation, generate_candidates
+from catalogue.importers.google_books import stage_google_books_response
+from catalogue.isbn import normalize_isbn, normalize_isbn10
+from catalogue.matching import normalize_bengali, title_sort_key
+from catalogue.materialization import materialize_source_records
+from catalogue.resolution import (
     MATCHER_VERSION,
     _title_similarity,
     _volume_relation,
@@ -104,7 +104,7 @@ def test_fuzzy_matching_is_bounded_idempotent_and_preserves_rejection(tmp_path: 
     document_path.write_bytes(b"document")
     document = CatalogueFoundation(db).upsert_local_document(document_path, metadata={})
 
-    from pdf_craft.catalogue import resolution
+    from catalogue import resolution
 
     calls = 0
     original = resolution.fuzzy_match_score

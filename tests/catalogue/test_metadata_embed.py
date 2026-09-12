@@ -9,10 +9,10 @@ from pathlib import Path
 import pytest
 from pypdf import PdfWriter
 
-from pdf_craft.catalogue import metadata_embed as embed
-from pdf_craft.catalogue import metadata_manifest as manifest
-from pdf_craft.catalogue.epub_metadata import extract_epub_metadata
-from pdf_craft.catalogue.pdf_metadata import extract_pdf_metadata
+from catalogue import metadata_embed as embed
+from catalogue import metadata_manifest as manifest
+from catalogue.epub_metadata import extract_epub_metadata
+from catalogue.pdf_metadata import extract_pdf_metadata
 
 CONTAINER = """<?xml version="1.0" encoding="UTF-8"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">

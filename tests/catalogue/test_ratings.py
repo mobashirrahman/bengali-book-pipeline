@@ -6,9 +6,9 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from pdf_craft.catalogue.api.app import init_app
-from pdf_craft.catalogue.database import CatalogueDB
-from pdf_craft.catalogue.ratings import materialize_external_ratings, upsert_user_rating
+from catalogue.api.app import init_app
+from catalogue.database import CatalogueDB
+from catalogue.ratings import materialize_external_ratings, upsert_user_rating
 
 
 def _seed_rating_records(path: Path) -> None:
@@ -152,7 +152,7 @@ def test_default_and_custom_cors_allow_rating_writes(tmp_path: Path) -> None:
 
     # The module-level FastAPI app is shared by the catalogue tests. Rebuild
     # its middleware stack before exercising a second init_app configuration.
-    api_module = importlib.import_module("pdf_craft.catalogue.api.app")
+    api_module = importlib.import_module("catalogue.api.app")
     api_module.app.middleware_stack = None
     custom = TestClient(init_app(path, cors_origins=["https://frontend.example"]))
     custom_preflight = custom.options(

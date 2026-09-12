@@ -12,8 +12,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pdf_craft.catalogue import scan_quality
-from pdf_craft.catalogue.scan_quality import (
+from catalogue import scan_quality
+from catalogue.scan_quality import (
     ScanQuality, measure_document, page_confidence,
 )
 

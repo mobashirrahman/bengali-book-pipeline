@@ -16,9 +16,9 @@ from pathlib import Path
 
 import pytest
 
-import pdf_craft.catalogue.page_fingerprint as page_fp
-from pdf_craft.catalogue.database import CatalogueDB
-from pdf_craft.catalogue.dedupe import (
+import catalogue.page_fingerprint as page_fp
+from catalogue.database import CatalogueDB
+from catalogue.dedupe import (
     DEDUPE_TOOL_VERSION,
     MAX_AUTO_CLUSTER,
     RELATION_DUPLICATE,
@@ -52,8 +52,8 @@ from pdf_craft.catalogue.dedupe import (
     summarize,
     write_report_files,
 )
-from pdf_craft.catalogue.schema import initialize_database
-from pdf_craft.catalogue.page_fingerprint import (
+from catalogue.schema import initialize_database
+from catalogue.page_fingerprint import (
     PageFingerprint,
     find_duplicate_documents,
 )

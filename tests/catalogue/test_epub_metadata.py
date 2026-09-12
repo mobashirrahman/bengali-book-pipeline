@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from pdf_craft.catalogue.epub_metadata import EpubMetadataError, extract_epub_metadata
+from catalogue.epub_metadata import EpubMetadataError, extract_epub_metadata
 
 ISBN_13 = "9780131103627"
 ISBN_13_DASHED = "978-0-13-110362-7"

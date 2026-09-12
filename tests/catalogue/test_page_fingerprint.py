@@ -10,7 +10,7 @@ import random
 
 from PIL import Image
 
-from pdf_craft.catalogue.page_fingerprint import (
+from catalogue.page_fingerprint import (
     DUPLICATE_THRESHOLD, PageFingerprint, dhash, find_duplicate_documents,
     from_signed64, hamming, sample_page_indexes, to_signed64,
 )

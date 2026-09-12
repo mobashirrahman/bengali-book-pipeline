@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from pdf_craft.catalogue.database import CatalogueDB
-from pdf_craft.catalogue.models import (
+from catalogue.database import CatalogueDB
+from catalogue.models import (
     AuthorRole,
     Book,
     Bookmark,
@@ -103,7 +103,7 @@ class TestBooks:
 
 class TestAuthors:
     def test_create_and_get_author(self, db: CatalogueDB) -> None:
-        from pdf_craft.catalogue.models import Author
+        from catalogue.models import Author
         author = Author(name="রবীন্দ্রনাথ ঠাকুর")
         author_id = db.create_author(author)
         assert author_id > 0
@@ -118,7 +118,7 @@ class TestAuthors:
         assert id1 == id2
 
     def test_book_author_link(self, db: CatalogueDB) -> None:
-        from pdf_craft.catalogue.models import Author
+        from catalogue.models import Author
         book_id = db.create_book(Book(title="কপালকুণ্ডলা"))
         author_id = db.create_author(Author(name="বঙ্কিমচন্দ্র চট্টোপাধ্যায়"))
         db.add_book_author(book_id, author_id, AuthorRole.AUTHOR)
@@ -128,7 +128,7 @@ class TestAuthors:
         assert authors[0].name == "বঙ্কিমচন্দ্র চট্টোপাধ্যায়"
 
     def test_get_author_books(self, db: CatalogueDB) -> None:
-        from pdf_craft.catalogue.models import Author
+        from catalogue.models import Author
         author_id = db.create_author(Author(name="হুমায়ুন আহমেদ"))
         b1 = db.create_book(Book(title="মিসির আলি"))
         b2 = db.create_book(Book(title="তোমার ঵োনা"))

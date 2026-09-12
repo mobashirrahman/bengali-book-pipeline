@@ -1,6 +1,6 @@
 """Best-effort PDF metadata extraction for the staged catalogue pipeline.
 
-The matcher in :mod:`pdf_craft.catalogue.resolution` falls back to guessing
+The matcher in :mod:`catalogue.resolution` falls back to guessing
 from file paths when ``metadata_json`` is empty, so this module recovers a
 small, high-confidence ``title`` / ``authors`` / ``isbns`` dict from embedded
 PDF metadata.  Scanner and converter output is full of junk ``/Title`` values

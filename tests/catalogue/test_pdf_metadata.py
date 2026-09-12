@@ -9,8 +9,8 @@ from typing import Any
 import pytest
 from pypdf import PdfWriter
 
-from pdf_craft.catalogue import pdf_metadata as module
-from pdf_craft.catalogue.pdf_metadata import PdfMetadataError, extract_pdf_metadata
+from catalogue import pdf_metadata as module
+from catalogue.pdf_metadata import PdfMetadataError, extract_pdf_metadata
 
 VALID_ISBN13 = "9780306406157"
 VALID_ISBN13_HYPHENATED = "978-0-306-40615-7"

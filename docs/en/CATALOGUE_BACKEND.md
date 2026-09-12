@@ -105,9 +105,9 @@ its existing behavior.
 Run a complete scan from the repository root with:
 
 ```bash
-python -m pdf_craft.catalogue.cli init \
+python -m catalogue.cli init \
   --db pdf-craft-output/catalogue/catalogue.db
-python -m pdf_craft.catalogue.cli ingest-local \
+python -m catalogue.cli ingest-local \
   --db pdf-craft-output/catalogue/catalogue.db --data data \
   --extensions pdf epub pcex
 ```
@@ -126,7 +126,7 @@ sqlite3 pdf-craft-output/catalogue/catalogue.db \
 Generate reviewable edition candidates for all local document identities with:
 
 ```bash
-python -m pdf_craft.catalogue.cli resolve-local \
+python -m catalogue.cli resolve-local \
   --db pdf-craft-output/catalogue/catalogue.db --only-unmatched
 ```
 
@@ -173,8 +173,8 @@ Initialize and inspect the schema:
 
 ```bash
 export CATALOGUE_POSTGRES_DSN='postgresql://USER:PASSWORD@127.0.0.1:55432/DBNAME'
-python -m pdf_craft.catalogue.cli postgres-init
-python -m pdf_craft.catalogue.cli postgres-status
+python -m catalogue.cli postgres-init
+python -m catalogue.cli postgres-status
 ```
 
 The API selects PostgreSQL explicitly with `--postgres-dsn`, or by calling
@@ -218,7 +218,7 @@ interrupted transfer resumes safely. A repeated transfer is idempotent and
 resets PostgreSQL identity sequences after completion.
 
 ```bash
-python -m pdf_craft.catalogue.cli transfer-postgres \
+python -m catalogue.cli transfer-postgres \
   --db pdf-craft-output/catalogue/catalogue.db \
   --dsn "$CATALOGUE_POSTGRES_DSN" --batch-size 500
 ```
@@ -233,9 +233,9 @@ The clean local database used for the current generated collection is
 ```bash
 PGROOT=/scratch/mdra00001/conda/envs/pdf-craft-postgres
 "$PGROOT/bin/createdb" -h 127.0.0.1 -p 55432 pdf_craft_catalogue
-python -m pdf_craft.catalogue.cli postgres-init \
+python -m catalogue.cli postgres-init \
   --dsn postgresql://127.0.0.1:55432/pdf_craft_catalogue
-python -m pdf_craft.catalogue.cli transfer-postgres \
+python -m catalogue.cli transfer-postgres \
   --db pdf-craft-output/catalogue/catalogue.db \
   --dsn postgresql://127.0.0.1:55432/pdf_craft_catalogue
 ```
@@ -249,12 +249,12 @@ the inventory queries above for the current counts.
 Run the CLI as a module from the repository root:
 
 ```bash
-python -m pdf_craft.catalogue.cli init --db pdf-craft-output/catalogue/catalogue.db
-python -m pdf_craft.catalogue.cli ingest-local \
+python -m catalogue.cli init --db pdf-craft-output/catalogue/catalogue.db
+python -m catalogue.cli ingest-local \
   --db pdf-craft-output/catalogue/catalogue.db --data data
-python -m pdf_craft.catalogue.cli stats \
+python -m catalogue.cli stats \
   --db pdf-craft-output/catalogue/catalogue.db
-python -m pdf_craft.catalogue.cli serve \
+python -m catalogue.cli serve \
   --db pdf-craft-output/catalogue/catalogue.db \
   --content-root /absolute/path/to/approved/book/files \
   --asset-root /absolute/path/to/approved/cover/assets
@@ -277,22 +277,22 @@ escapes, and serves only registered raster MIME types with `nosniff`.
 Stage supplied source files before materializing them:
 
 ```bash
-python -m pdf_craft.catalogue.cli stage-rokomari \
+python -m catalogue.cli stage-rokomari \
   --db pdf-craft-output/catalogue/catalogue.db \
   --file /path/to/rokomari-bd-product-data.jsonl \
   --snapshot-key sayurio-rokomari-bd-product-data \
   --batch-size 1000
-python -m pdf_craft.catalogue.cli materialize-source \
+python -m catalogue.cli materialize-source \
   --db pdf-craft-output/catalogue/catalogue.db \
   --source rokomari --batch-size 500
-python -m pdf_craft.catalogue.cli materialize-ratings \
+python -m catalogue.cli materialize-ratings \
   --db pdf-craft-output/catalogue/catalogue.db \
   --source rokomari --batch-size 500
-python -m pdf_craft.catalogue.cli stage-google \
+python -m catalogue.cli stage-google \
   --db pdf-craft-output/catalogue/catalogue.db --file google-response.json
-python -m pdf_craft.catalogue.cli stage-openlibrary-dump \
+python -m catalogue.cli stage-openlibrary-dump \
   --db pdf-craft-output/catalogue/catalogue.db --file works.dump.gz
-python -m pdf_craft.catalogue.cli materialize-source \
+python -m catalogue.cli materialize-source \
   --db pdf-craft-output/catalogue/catalogue.db
 ```
 

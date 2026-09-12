@@ -1,6 +1,6 @@
-"""Tests for pdf_craft.catalogue.filename_parser (per-source templates)."""
+"""Tests for catalogue.filename_parser (per-source templates)."""
 
-from pdf_craft.catalogue.filename_parser import ParsedFilename, parse_filename
+from catalogue.filename_parser import ParsedFilename, parse_filename
 
 
 def test_granthagara_bilingual_title_no_author():
@@ -329,7 +329,7 @@ def test_non_person_directories_are_rejected():
     as the author of 1,626 documents, `মাসুদ রানা সিরিজ` (a series) of 309, and
     `ওয়েস্টার্ন বই - সেবা প্রকাশনী` (a publisher) of 120.
     """
-    from pdf_craft.catalogue.filename_parser import is_probably_person_name
+    from catalogue.filename_parser import is_probably_person_name
 
     for value in (
         "epub-staging", "Others", "বিবিধ", "উপন্যাস", "মাসুদ রানা সিরিজ",
@@ -347,7 +347,7 @@ def test_real_authors_survive_even_when_absent_from_the_catalogue():
     `মুহম্মদ জাফর ইকবাল` labels 234 documents and is a real person. Rejecting
     everything the catalogue lacks would discard them.
     """
-    from pdf_craft.catalogue.filename_parser import is_probably_person_name
+    from catalogue.filename_parser import is_probably_person_name
 
     for value in (
         "মুহম্মদ জাফর ইকবাল", "তসলিমা নাসরিন", "রবীন্দ্রনাথ ঠাকুর",
@@ -377,7 +377,7 @@ def test_rejected_directory_is_not_emitted_as_an_author():
 def test_embedded_title_splits_title_from_author():
     """1,630 EPUBs carry a numeric filename and the original PDF name as
     dc:title, so the author dc:creator lacks is sitting in the title."""
-    from pdf_craft.catalogue.filename_parser import parse_embedded_title
+    from catalogue.filename_parser import parse_embedded_title
 
     result = parse_embedded_title("শ্রেষ্ঠ কবিতা - শফিকুল ইসলাম")
     assert result.titles == ("শ্রেষ্ঠ কবিতা",)
@@ -385,7 +385,7 @@ def test_embedded_title_splits_title_from_author():
 
 
 def test_embedded_title_bengali_danda_separator():
-    from pdf_craft.catalogue.filename_parser import parse_embedded_title
+    from catalogue.filename_parser import parse_embedded_title
 
     result = parse_embedded_title("অনুর পাঠশালা ।। মাহমুদুল হক")
     assert result.titles == ("অনুর পাঠশালা",)
@@ -395,7 +395,7 @@ def test_embedded_title_bengali_danda_separator():
 def test_embedded_title_strips_scraper_boilerplate():
     # `Unknown Author -` leaked into 332 OPF titles and the download banner
     # into 138, because these EPUBs were converted from the scraped PDFs.
-    from pdf_craft.catalogue.filename_parser import parse_embedded_title
+    from catalogue.filename_parser import parse_embedded_title
 
     result = parse_embedded_title("Unknown Author - Maa is waiting to be download!!!")
     assert result.titles == ("Maa",)
@@ -403,7 +403,7 @@ def test_embedded_title_strips_scraper_boilerplate():
 
 
 def test_embedded_title_extracts_bengali_volume_digits():
-    from pdf_craft.catalogue.filename_parser import parse_embedded_title
+    from catalogue.filename_parser import parse_embedded_title
 
     result = parse_embedded_title("৬৩। একজন মায়াবতী - হুমায়ূন আহমেদ")
     assert result.volume == "63"
@@ -412,7 +412,7 @@ def test_embedded_title_extracts_bengali_volume_digits():
 
 
 def test_embedded_title_trailing_parenthetical_author():
-    from pdf_craft.catalogue.filename_parser import parse_embedded_title
+    from catalogue.filename_parser import parse_embedded_title
 
     result = parse_embedded_title("বাংলা গল্প-বিচিত্রা (বিভূতিভূষণ বন্দ্যোপাধ্যায়)")
     assert result.authors == ("বিভূতিভূষণ বন্দ্যোপাধ্যায়",)
@@ -421,7 +421,7 @@ def test_embedded_title_trailing_parenthetical_author():
 
 
 def test_embedded_title_without_a_separator_yields_no_author():
-    from pdf_craft.catalogue.filename_parser import parse_embedded_title
+    from catalogue.filename_parser import parse_embedded_title
 
     result = parse_embedded_title("CH3")
     assert result.titles == ("CH3",)
@@ -430,7 +430,7 @@ def test_embedded_title_without_a_separator_yields_no_author():
 
 def test_embedded_title_rejects_a_non_person_tail():
     # A dash in a title does not make the tail an author.
-    from pdf_craft.catalogue.filename_parser import parse_embedded_title
+    from catalogue.filename_parser import parse_embedded_title
 
     result = parse_embedded_title("রচনাবলী - ২য় খণ্ড সমগ্র")
     assert result.authors == ()
@@ -443,7 +443,7 @@ def test_embedded_title_strips_file_extension_and_site_stamp():
     `ca$hvertising ( PDFDrive.com ).epub`. The trailing `.pdf` also defeated the
     danda split until it was stripped first.
     """
-    from pdf_craft.catalogue.filename_parser import parse_embedded_title
+    from catalogue.filename_parser import parse_embedded_title
 
     result = parse_embedded_title("শেক্সপীয়র রচনাবলী ।। পৃথ্বীরাজ সেন.pdf")
     assert result.titles == ("শেক্সপীয়র রচনাবলী",)

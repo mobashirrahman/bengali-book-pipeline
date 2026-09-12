@@ -1,4 +1,4 @@
-from pdf_craft.catalogue.title_denylist import (
+from catalogue.title_denylist import (
     DENYLISTED_AUTHORS,
     DENYLISTED_TITLES,
     clean_authors,

@@ -3,13 +3,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pdf_craft.catalogue.database import CatalogueDB
-from pdf_craft.catalogue.foundation import (
+from catalogue.database import CatalogueDB
+from catalogue.foundation import (
     CatalogueFoundation,
     file_sha256,
     ingest_local_documents,
 )
-from pdf_craft.catalogue.schema import SCHEMA_VERSION
+from catalogue.schema import SCHEMA_VERSION
 
 
 def test_schema_migrates_existing_v1_database(tmp_path: Path) -> None:
@@ -116,7 +116,7 @@ def test_local_inventory_records_unsupported_and_unreadable_files(
             raise OSError("cannot read fixture")
         return file_sha256(path)
 
-    monkeypatch.setattr("pdf_craft.catalogue.foundation.file_sha256", fail_hash)
+    monkeypatch.setattr("catalogue.foundation.file_sha256", fail_hash)
     db = CatalogueDB(tmp_path / "db.sqlite3")
     indexed, skipped = ingest_local_documents(db, data)
 

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Optional
 import random
 
-from pdf_craft.catalogue.page_fingerprint import render_pages
+from catalogue.page_fingerprint import render_pages
 
 
 def get_page_count(pdf_path: Path) -> Optional[int]:

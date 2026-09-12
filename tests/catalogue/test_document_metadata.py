@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from pdf_craft.catalogue.document_metadata import build_document_metadata
+from catalogue.document_metadata import build_document_metadata
 
 _BENGALIEBOOK = (
     "data/incoming-scraped/bengaliebook/books/"
@@ -106,7 +106,7 @@ def test_epub_opf_outranks_the_filename_slug():
     ranks below a matched scraper template.
     """
     from types import SimpleNamespace
-    import pdf_craft.catalogue.document_metadata as module
+    import catalogue.document_metadata as module
 
     def fake_epub(path):
         return {"title": "এলাটিং বেলাটিং", "authors": ["শামসুর রাহমান"]}
@@ -134,7 +134,7 @@ def test_pdf_keeps_filename_precedence():
 def test_format_named_directory_is_not_an_author():
     # `ই-পাব` is Bengali for "e-pub"; it was written as the author of every
     # EPUB stored under it.
-    from pdf_craft.catalogue.filename_parser import is_probably_person_name
+    from catalogue.filename_parser import is_probably_person_name
 
     assert not is_probably_person_name("ই-পাব")
     assert not is_probably_person_name("epub-staging")

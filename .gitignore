@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# Book corpus and generated pipeline output — large, local, not source
+/data/
+/sample_book/
+/pdf-craft-output/
+/models-cache/
+
+# Snakemake working state
+.snakemake/
+
+# Environment
+.env
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store

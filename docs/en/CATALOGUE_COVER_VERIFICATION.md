@@ -6,7 +6,7 @@ candidate rows in ascending asset ID order, so a later invocation can resume
 with the previous `next_after_id` value.
 
 ```bash
-python -m pdf_craft.catalogue.cli cover verify-batch \
+python -m catalogue.cli cover verify-batch \
   --db catalogue.db --asset-root pdf-craft-output/assets \
   --limit 100 --after-id 0
 ```

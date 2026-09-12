@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from pdf_craft.catalogue.database import CatalogueDB
-from pdf_craft.catalogue.importers.open_library import stage_open_library_dump
-from pdf_craft.catalogue.importers.rokomari import stage_rokomari_from_file
-from pdf_craft.catalogue.materialization import (
+from catalogue.database import CatalogueDB
+from catalogue.importers.open_library import stage_open_library_dump
+from catalogue.importers.rokomari import stage_rokomari_from_file
+from catalogue.materialization import (
     materialize_source_records,
     parse_source_record,
 )

@@ -1,7 +1,7 @@
 """Fuse every available metadata signal into ``local_documents.metadata_json``.
 
 All 22,717 staged documents ship with an empty ``metadata_json``, so
-:func:`pdf_craft.catalogue.resolution._document_fields` has nothing to match on
+:func:`catalogue.resolution._document_fields` has nothing to match on
 but the file path.  Rather than build a second matcher, this module writes the
 fields that matcher already reads, so improving extraction improves matching
 without touching the matcher at all.
@@ -78,7 +78,7 @@ def build_document_metadata(
 ) -> dict[str, Any]:
     """Fuse filename, embedded and cover signals for one document.
 
-    ``cover_reading`` is an optional :class:`~pdf_craft.catalogue.cover_ocr.CoverReading`.
+    ``cover_reading`` is an optional :class:`~catalogue.cover_ocr.CoverReading`.
     It is passed in rather than produced here because OCR needs a GPU-resident
     model that must be amortised across the corpus, and because most documents
     never need it.

@@ -5,7 +5,7 @@ import random
 import string
 from pathlib import Path
 
-from pdf_craft.catalogue.text_signature import (
+from catalogue.text_signature import (
     BANDS,
     MIN_SHINGLES,
     TEXT_SIGNATURE_ALGO_VERSION,

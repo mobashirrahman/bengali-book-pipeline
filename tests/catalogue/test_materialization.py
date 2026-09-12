@@ -3,10 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pdf_craft.catalogue.database import CatalogueDB
-from pdf_craft.catalogue.importers.google_books import stage_google_books_response
-from pdf_craft.catalogue.importers.rokomari import stage_rokomari_from_file
-from pdf_craft.catalogue.materialization import (
+from catalogue.database import CatalogueDB
+from catalogue.importers.google_books import stage_google_books_response
+from catalogue.importers.rokomari import stage_rokomari_from_file
+from catalogue.materialization import (
     _assert,
     _get_person,
     materialize_source_records,
@@ -169,7 +169,7 @@ def test_repair_sweeps_orphans_once_regardless_of_batch_count(tmp_path, monkeypa
     Against the live catalogue (3.8M assertions, 76k people) sweeping inside
     the batch loop meant 424 full table scans for a result identical to one.
     """
-    from pdf_craft.catalogue import materialization as module
+    from catalogue import materialization as module
 
     db_path = tmp_path / "catalogue.db"
     db = CatalogueDB(db_path)

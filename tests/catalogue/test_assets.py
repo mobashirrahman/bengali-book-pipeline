@@ -5,7 +5,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from pdf_craft.catalogue.assets import (
+from catalogue.assets import (
     AssetError,
     fetch_remote_cover,
     rank_cover_candidates,
@@ -13,7 +13,7 @@ from pdf_craft.catalogue.assets import (
     register_remote_cover,
     select_cover,
 )
-from pdf_craft.catalogue.database import CatalogueDB
+from catalogue.database import CatalogueDB
 
 PNG = (b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\x0dIHDR" +
        b"\x00\x00\x00\x10\x00\x00\x00\x20\x08\x02\x00\x00\x00" + b"x")
@@ -82,7 +82,7 @@ def test_fetch_rejects_html_and_wrong_content_type(tmp_path: Path) -> None:
 
 
 def test_cover_verification_batch_is_bounded_resumable_and_idempotent(tmp_path: Path) -> None:
-    from pdf_craft.catalogue.assets import verify_cover_batch
+    from catalogue.assets import verify_cover_batch
 
     db = CatalogueDB(tmp_path / "db.sqlite")
     edition = _edition(db)
