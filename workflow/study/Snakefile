@@ -1,0 +1,161 @@
+# Phase-A transcript study: freeze -> validate -> dry-run -> annotate command.
+#
+# Invoke from the repo root:
+#   workflow/study/run.sh --dryrun            # graph check, no side effects
+#   workflow/study/run.sh --cores 1           # offline scaffold run
+#
+# Offline by design: inference runs WITHOUT --allow-execution, so every
+# model-backed adapter yields unsupported/mock predictions and no network,
+# CUDA, download, or vendor call happens. Real voter wiring (local GPU envs,
+# vendor transports, quota budgets) is the next packet, not this scaffold.
+# The pilot study root is only ever read; all outputs land in study_root.
+
+configfile: "workflow/study/config.yaml"
+
+STUDY = config["study_root"].rstrip("/")
+PILOT = config["pilot_study"].rstrip("/")
+STUDY_ID = config["study_id"]
+BASELINES = config["baselines"]
+ANNOTATE_PORT = str(config.get("annotate_port", 8768))
+PY = ".venv/bin/python -m pdf_craft_tool.research"
+
+
+rule all:
+    input:
+        STUDY + "/STUDY.json",
+        STUDY + "/validation.json",
+        STUDY + "/predictions.dry.jsonl",
+        STUDY + "/annotate-command.txt",
+        STUDY + "/study-serve-command.txt",
+        STUDY + "/triage.json",
+
+
+rule items:
+    input:
+        STUDY + "/STUDY.json",
+    output:
+        STUDY + "/items.json",
+    shell:
+        ".venv/bin/python workflow/study/scripts/make_study_items.py"
+        " --study-root {STUDY} --output {output}"
+
+
+rule lines_tesseract:
+    input:
+        STUDY + "/items.json",
+    output:
+        STUDY + "/lines_tesseract.jsonl",
+    shell:
+        ".venv/bin/python workflow/study/scripts/run_tesseract_lines.py"
+        " --items {input} --output {output}"
+        " --tesseract-bin {config[tesseract_bin]}"
+        " --tessdata-dir {config[tessdata_dir]}"
+        " --lang ben --oem 1 --psm {config[tesseract_psm]}"
+
+
+rule lines_easyocr:
+    input:
+        STUDY + "/items.json",
+    output:
+        STUDY + "/lines_easyocr.jsonl",
+    shell:
+        "EASYOCR_MODEL_DIR={config[easyocr_model_dir]}"
+        " {config[easyocr_python]} workflow/study/scripts/run_easyocr_lines.py"
+        " --items {input} --output {output} --device {config[easyocr_device]}"
+        " --canvas-size {config[easyocr_canvas]}"
+        " --quantize-mode {config[easyocr_quantize_mode]}"
+        " --timeout {config[easyocr_timeout]}"
+
+
+rule lines_surya:
+    input:
+        STUDY + "/items.json",
+    output:
+        STUDY + "/lines_surya.jsonl",
+    shell:
+        "SURYA_INFERENCE_BACKEND={config[surya_backend]}"
+        ' LLAMA_CPP_BINARY="{config[llama_cpp_binary]}"'
+        ' LD_LIBRARY_PATH="$(dirname {config[llama_cpp_binary]})${{LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}}"'
+        " {config[surya_python]} workflow/study/scripts/run_surya_lines.py"
+        " --items {input} --output {output} --backend {config[surya_backend]}"
+
+
+rule vendors:
+    input:
+        STUDY + "/items.json",
+        STUDY + "/rights.json",
+    output:
+        STUDY + "/predictions.vendors.jsonl",
+    shell:
+        ".venv/bin/python workflow/study/scripts/run_vendors.py"
+        " --study {STUDY} --out {output}"
+
+
+rule tally:
+    input:
+        STUDY + "/annotation_pages.json",
+        STUDY + "/lines_tesseract.jsonl",
+        STUDY + "/lines_easyocr.jsonl",
+        STUDY + "/lines_surya.jsonl",
+        STUDY + "/predictions.vendors.jsonl",
+    output:
+        STUDY + "/triage.json",
+        STUDY + "/votes.sqlite3",
+    shell:
+        ".venv/bin/python workflow/study/scripts/tally_votes.py"
+        " --study {STUDY} --db {STUDY}/votes.sqlite3 --out {STUDY}/triage.json"
+
+
+rule freeze:
+    output:
+        STUDY + "/STUDY.json",
+    shell:
+        ".venv/bin/python workflow/study/scripts/freeze_phase_a.py"
+        " --pilot {PILOT} --study {STUDY}"
+        ' --study-id "{STUDY_ID}" --phase {config[run_name]}'
+        " --out {output}"
+
+
+rule validate:
+    input:
+        STUDY + "/STUDY.json",
+        STUDY + "/predictions.dry.jsonl",
+    output:
+        STUDY + "/validation.json",
+    shell:
+        "{PY} validate --study-root {STUDY} --out {output}"
+
+
+rule dry_run:
+    input:
+        STUDY + "/STUDY.json",
+    output:
+        STUDY + "/predictions.dry.jsonl",
+    shell:
+        "{PY} run --study-root {STUDY}"
+        " --manifest {STUDY}/sample_manifest.json"
+        " --config {BASELINES} --pages {STUDY}/ocr_pages.json"
+        " --out {output}"
+
+
+rule annotate_cmd:
+    input:
+        STUDY + "/predictions.dry.jsonl",
+    output:
+        STUDY + "/annotate-command.txt",
+    shell:
+        "{PY} annotate --study-root {STUDY} --port {ANNOTATE_PORT} > {output}"
+
+
+rule study_serve_cmd:
+    input:
+        STUDY + "/votes.sqlite3",
+    output:
+        STUDY + "/study-serve-command.txt",
+    shell:
+        "echo \".venv/bin/python -m pdf_craft_tool.research.study_server"
+        " --db {STUDY}/annotation-roles.sqlite3"
+        " --votes-db {STUDY}/votes.sqlite3"
+        " --voter-ids tesseract easyocr surya google azure"
+        " --host 127.0.0.1 --port {ANNOTATE_PORT}\""
+        " > {output} && cat {output}"

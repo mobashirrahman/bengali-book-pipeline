@@ -1,0 +1,34 @@
+# Phase-A study workflow config. All paths repo-root-relative.
+run_name: phase-a-60
+pilot_study: pdf-craft-output/research/pilot-study
+study_root: pdf-craft-output/research/main-study-1000
+study_id: bangla-transcript-main-study
+baselines: research/configs/baselines.json
+# Loopback port for THIS study's annotation server. The pilot preview serves
+# on 8767; the main study takes 8768 so both can run side by side.
+annotate_port: 8768
+# Execution toolchain (absolute paths: rules call these pythons directly
+# instead of duplicating the benchmark conda envs via --sdm conda).
+venv_python: .venv/bin/python
+easyocr_python: /scratch/mdra00001/conda/envs/bnch-easyocr/bin/python
+surya_python: /scratch/mdra00001/conda/envs/bnch-surya/bin/python
+easyocr_model_dir: /scratch/pdf-craft/models-cache/easyocr
+tesseract_bin: /scratch/mdra00001/conda/envs/ocrbench/bin/tesseract
+tessdata_dir: /scratch/mdra00001/conda/envs/ocrbench/share/tessdata
+tesseract_psm: 3
+# EasyOCR voter config. GPU is first choice; cpu+full-canvas is the recorded
+# fallback while the lab GPU is occupied (canvas 1280 and quantize-only
+# variants were measured and REJECTED: 0/29-line recall on the probe page).
+easyocr_device: cpu
+easyocr_canvas: 2560
+easyocr_quantize_mode: "off"
+easyocr_timeout: 1200
+# Surya llamacpp backend (mirrors workflow/run.sh).
+surya_backend: llamacpp
+llama_cpp_binary: /scratch/pdf-craft/models-cache/llamacpp/llama-b10883/llama-server
+# Voter ids must match StudyVoteStore (exactly these five).
+voters: ["tesseract", "easyocr", "surya", "google", "azure"]
+# Execution stays OFF in the scaffold: dry run proves plumbing with
+# mock/unsupported predictions. Vendor/local voter wiring flips this later
+# together with quota budgets and key checks.
+allow_execution: false

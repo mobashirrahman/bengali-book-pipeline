@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Study adjudication · blinded A–E</title>
+<style>
+:root {
+  --bg: #f3f4f7; --panel: #ffffff; --ink: #171a1f; --muted: #5d6673;
+  --line: #e1e4ea; --line-strong: #c9ced8;
+  --accent: #3451d1; --accent-ink: #ffffff; --accent-soft: #e8ecff;
+  --ok: #1f7a3a; --ok-soft: #e2f4e7; --bad: #b42318; --bad-soft: #fdeceb;
+  --mark: #ffe08a; --mark-ink: #4a3300; --gap: #e03131;
+  --shadow: 0 1px 2px rgba(16,24,40,.05), 0 2px 8px rgba(16,24,40,.06);
+  --radius: 12px;
+  --ui: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Helvetica Neue", Arial, sans-serif;
+  --bn: "Noto Sans Bengali", "Noto Serif Bengali", "Hind Siliguri", "Kalpurush", "SolaimanLipi", "Vrinda", "Bangla Sangam MN", "Lohit Bengali", var(--ui);
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", "DejaVu Sans Mono", monospace;
+  --bn-size: 1.35rem;
+  --bar-h: 4.25rem;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1115; --panel: #181b21; --ink: #e8eaee; --muted: #9aa3b0;
+    --line: #2a2f38; --line-strong: #3a414d;
+    --accent: #7d95ff; --accent-ink: #0b0d12; --accent-soft: #1e2542;
+    --ok: #5fd07f; --ok-soft: #14301e; --bad: #ff8b80; --bad-soft: #3b1a17;
+    --mark: #7a5a12; --mark-ink: #fff1cc; --gap: #ff6b6b;
+    --shadow: 0 1px 2px rgba(0,0,0,.4);
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  font: 15px/1.5 var(--ui); color: var(--ink); background: var(--bg);
+  min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column;
+  -webkit-font-smoothing: antialiased;
+}
+[hidden] { display: none !important; }
+button, input, select, textarea { font: inherit; color: inherit; }
+kbd {
+  font: 600 .72rem/1 var(--mono); padding: .2rem .38rem; border-radius: 5px;
+  border: 1px solid var(--line-strong); border-bottom-width: 2px;
+  background: var(--panel); color: var(--muted); white-space: nowrap;
+}
+button {
+  cursor: pointer; border: 1px solid var(--line-strong); background: var(--panel);
+  border-radius: 9px; padding: .5rem .85rem; min-height: 2.5rem;
+  display: inline-flex; align-items: center; gap: .45rem; justify-content: center;
+  transition: background .12s, border-color .12s, box-shadow .12s;
+}
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible {
+  outline: 3px solid var(--accent-soft); outline-offset: 1px; border-color: var(--accent);
+}
+button:disabled { cursor: not-allowed; opacity: .5; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+button.primary kbd { background: transparent; color: inherit; border-color: currentColor; opacity: .8; }
+button.ghost { background: transparent; }
+button.icon { width: 2.5rem; padding: 0; font-weight: 700; }
+
+/* ---- top bar ---- */
+.topbar {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
+  padding: .6rem clamp(.75rem, 2.5vw, 1.5rem);
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  backdrop-filter: saturate(1.4) blur(8px); -webkit-backdrop-filter: saturate(1.4) blur(8px);
+  border-bottom: 1px solid var(--line);
+}
+.brand { display: flex; align-items: center; gap: .6rem; min-width: 0; }
+.logo {
+  width: 2.1rem; height: 2.1rem; border-radius: 9px; display: grid; place-items: center;
+  background: var(--accent); color: var(--accent-ink); font: 700 1.15rem/1 var(--bn);
+}
+.brand h1 { font-size: 1rem; margin: 0; line-height: 1.2; }
+.brand .sub { margin: 0; font-size: .78rem; color: var(--muted); }
+.progress { flex: 1 1 22rem; min-width: 0; display: grid; gap: .35rem; }
+.stats { display: flex; gap: 1.1rem; flex-wrap: wrap; font-size: .86rem; }
+.stat { white-space: nowrap; color: var(--muted); }
+.stat b { color: var(--ink); font-variant-numeric: tabular-nums; font-size: .98rem; }
+.stat .of { font-variant-numeric: tabular-nums; }
+.bar { height: 6px; background: var(--line); border-radius: 99px; overflow: hidden; }
+.bar span { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--ok)); transition: width .35s ease; }
+.tools { display: flex; gap: .5rem; align-items: center; }
+.tools select {
+  max-width: 17rem; min-height: 2.5rem; border-radius: 9px; border: 1px solid var(--line-strong);
+  background: var(--panel); padding: 0 .6rem; font-variant-numeric: tabular-nums;
+}
+
+/* ---- main ---- */
+main { flex: 1; width: 100%; max-width: 110rem; margin: 0 auto; padding: 1rem clamp(.75rem, 2.5vw, 1.5rem); }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+.login, .done { max-width: 30rem; margin: 8vh auto; padding: 1.6rem; }
+.login h2, .done h2 { margin: 0 0 .4rem; font-size: 1.2rem; }
+.login p { color: var(--muted); margin: 0 0 1rem; }
+.login code { font-family: var(--mono); font-size: .85em; }
+.login form { display: flex; gap: .5rem; }
+.login input { flex: 1; min-width: 0; border: 1px solid var(--line-strong); border-radius: 9px; padding: .55rem .7rem; background: var(--bg); }
+.done { text-align: center; }
+.done .big { font-size: 2.6rem; color: var(--ok); line-height: 1; margin-bottom: .5rem; }
+.error { color: var(--bad); }
+
+.workspace { display: grid; gap: 1rem; grid-template-columns: minmax(0, 1fr); align-items: start; }
+.crop-pane { margin: 0; }
+.crop-frame {
+  position: relative; background: #fff; border: 1px solid var(--line); border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: .5rem; cursor: zoom-in; overflow: hidden;
+  min-height: 4rem; display: grid; place-items: center;
+}
+.crop-frame img {
+  display: block; width: 100%; height: auto; max-height: 34vh; object-fit: contain;
+  transition: opacity .15s;
+}
+.crop-frame.is-loading img { opacity: .15; }
+.crop-loading {
+  position: absolute; inset: 0; display: none; place-items: center;
+  color: #5d6673; font-size: .85rem;
+}
+.crop-frame.is-loading .crop-loading, .crop-frame.is-failed .crop-loading { display: grid; }
+.crop-pane figcaption {
+  display: flex; justify-content: space-between; gap: .75rem; flex-wrap: wrap;
+  margin-top: .35rem; font-size: .8rem; color: var(--muted);
+}
+.region-id { font-weight: 600; color: var(--ink); }
+.page-id { font-family: var(--mono); font-size: .75rem; }
+.hint { color: var(--muted); font-size: .8rem; }
+
+@media (min-width: 64rem) {
+  .workspace.is-tall { grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); }
+  .workspace.is-tall .crop-pane { position: sticky; top: 5.2rem; }
+  .workspace.is-tall .crop-frame img { max-height: calc(100dvh - 5.2rem - var(--bar-h) - 3.5rem); }
+}
+
+.work-pane { display: grid; gap: .9rem; min-width: 0; }
+.editor { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: .7rem .8rem .8rem; }
+.editor-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin-bottom: .45rem; }
+.editor-head label { font-weight: 600; font-size: .9rem; }
+.head-tools { display: flex; align-items: center; gap: .45rem; }
+button.small { min-height: 1.9rem; padding: .15rem .6rem; font-size: .8rem; border-radius: 99px; }
+.chip {
+  font-size: .76rem; font-weight: 600; padding: .2rem .55rem; border-radius: 99px;
+  background: var(--bg); color: var(--muted); border: 1px solid var(--line);
+}
+.chip.is-choice { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+.chip.is-custom { background: var(--mark); color: var(--mark-ink); border-color: transparent; }
+textarea#resolved {
+  display: block; width: 100%; resize: vertical; min-height: 3.2rem;
+  font-family: var(--bn); font-size: var(--bn-size); line-height: 1.85;
+  border: 1px solid var(--line-strong); border-radius: 9px; padding: .45rem .65rem;
+  background: var(--bg);
+}
+
+.cands-head { display: flex; align-items: baseline; justify-content: space-between; gap: .5rem; flex-wrap: wrap; }
+.cands-head h2 { font-size: .9rem; margin: 0; }
+.candidates { display: grid; gap: .55rem; }
+.cand {
+  display: block; width: 100%; text-align: left; padding: .55rem .75rem .6rem;
+  border-radius: var(--radius); border: 1px solid var(--line); background: var(--panel);
+  box-shadow: var(--shadow); min-height: 0;
+}
+.cand:hover:not(:disabled) { border-color: var(--line-strong); }
+.cand.is-selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft), var(--shadow); }
+.cand-head { display: flex; align-items: center; gap: .5rem; margin-bottom: .15rem; }
+.cand-label { font-weight: 700; font-size: .95rem; }
+.cand.is-selected .cand-label { color: var(--accent); }
+.badges { margin-left: auto; display: flex; gap: .35rem; flex-wrap: wrap; justify-content: flex-end; }
+.badge { font-size: .7rem; font-weight: 600; padding: .12rem .45rem; border-radius: 99px; background: var(--bg); color: var(--muted); border: 1px solid var(--line); }
+.badge.ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+.badge.warn { background: var(--mark); color: var(--mark-ink); border-color: transparent; }
+.cand-text {
+  font-family: var(--bn); font-size: var(--bn-size); line-height: 1.85;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.cand.is-empty { box-shadow: none; background: transparent; border-style: dashed; }
+.cand.is-empty .cand-text { font: italic .9rem/1.5 var(--ui); color: var(--muted); }
+mark.d-ins { background: var(--mark); color: var(--mark-ink); border-radius: 3px; padding: 0 1px; }
+.d-del {
+  display: inline-block; width: 3px; height: 1.1em; margin: 0 1px; vertical-align: -0.15em;
+  background: var(--gap); border-radius: 2px;
+}
+
+/* ---- sticky action bar ---- */
+.actionbar {
+  position: sticky; bottom: 0; z-index: 20;
+  display: flex; gap: .6rem .75rem; align-items: center; flex-wrap: wrap;
+  padding: .6rem clamp(.75rem, 2.5vw, 1.5rem) calc(.6rem + env(safe-area-inset-bottom));
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  backdrop-filter: saturate(1.4) blur(8px); -webkit-backdrop-filter: saturate(1.4) blur(8px);
+  border-top: 1px solid var(--line); min-height: var(--bar-h);
+}
+.reason { flex: 1 1 20rem; display: flex; align-items: center; gap: .55rem; min-width: 0; }
+.reason label { font-size: .85rem; font-weight: 600; color: var(--muted); }
+.reason input {
+  flex: 1; min-width: 0; min-height: 2.5rem; border: 1px solid var(--line-strong);
+  border-radius: 9px; padding: .45rem .7rem; background: var(--bg);
+}
+.actions { display: flex; gap: .5rem; margin-left: auto; }
+
+/* ---- overlays ---- */
+.overlay { position: fixed; inset: 0; z-index: 50; background: rgba(8,10,14,.6); display: grid; place-items: center; padding: 1rem; }
+.sheet { background: var(--panel); border-radius: var(--radius); padding: 1.2rem 1.4rem; max-width: 34rem; width: 100%; max-height: 90vh; overflow: auto; box-shadow: 0 20px 60px rgba(0,0,0,.35); }
+.sheet h2 { margin: 0 0 .6rem; font-size: 1.05rem; }
+.sheet table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+.sheet td { padding: .38rem .2rem; border-top: 1px solid var(--line); vertical-align: top; }
+.sheet td:first-child { white-space: nowrap; padding-right: 1rem; }
+.sheet p { color: var(--muted); font-size: .85rem; margin: .8rem 0 0; }
+.zoom { overflow: auto; place-items: start center; cursor: zoom-out; }
+.zoom img { max-width: none; background: #fff; border-radius: 6px; margin: auto; }
+
+.toast {
+  position: fixed; left: 50%; bottom: calc(var(--bar-h) + 1rem); z-index: 60;
+  transform: translate(-50%, 1rem); opacity: 0; pointer-events: none;
+  background: var(--ink); color: var(--bg); padding: .55rem .95rem; border-radius: 99px;
+  font-size: .88rem; box-shadow: 0 8px 24px rgba(0,0,0,.25); transition: opacity .18s, transform .18s;
+  max-width: calc(100vw - 2rem);
+}
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+.toast.err { background: var(--bad); color: #fff; }
+
+@media (max-width: 40rem) {
+  body { font-size: 14px; }
+  .brand .sub, .cands-head .hint, .crop-pane .hint, .editor-head .hint,
+  .actions kbd, button.primary kbd { display: none; }
+  .topbar { gap: .5rem .75rem; }
+  .brand { flex: 1 1 auto; }
+  .brand h1 { font-size: .95rem; }
+  .tools { min-width: 0; }
+  .tools select { width: 100%; min-width: 0; }
+  .editor-head { flex-wrap: wrap; }
+  .progress { order: 3; flex-basis: 100%; }
+  .tools { margin-left: auto; }
+  .tools select { max-width: 11rem; }
+  .stats { gap: .8rem; }
+  .reason { flex-basis: 100%; }
+  .reason label { display: none; }
+  .actions { width: 100%; }
+  .actions #submit-btn { flex: 1; }
+  .crop-frame img { max-height: 28vh; }
+  :root { --bar-h: 7.5rem; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <div class="logo" aria-hidden="true">অ</div>
+    <div><h1>Study adjudication</h1><p class="sub">Blinded · candidates A–E only</p></div>
+  </div>
+  <div class="progress" aria-live="polite">
+    <div class="stats">
+      <span class="stat">Page <b id="p-page">–</b><span class="of">/<span id="p-pages">–</span></span></span>
+      <span class="stat">Region <b id="p-item">–</b><span class="of">/<span id="p-items">–</span></span></span>
+      <span class="stat">Resolved <b id="p-done">–</b><span class="of">/<span id="p-total">–</span></span></span>
+    </div>
+    <div class="bar" aria-hidden="true"><span id="p-bar"></span></div>
+  </div>
+  <div class="tools">
+    <select id="page-select" aria-label="Jump to page"></select>
+    <button id="help-btn" class="icon" type="button" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">?</button>
+    <button id="token-btn" class="ghost" type="button" title="Change adjudicator token">Token</button>
+  </div>
+</header>
+
+<main>
+  <section id="login" class="panel login" hidden>
+    <h2>Adjudicator token</h2>
+    <p>Paste the token printed by the study server (<code>Adjudicator token: …</code>
+      in its log). It is kept in this browser only.</p>
+    <form id="login-form" autocomplete="off">
+      <input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="Adjudicator token" aria-label="Adjudicator token">
+      <button class="primary" type="submit">Continue</button>
+    </form>
+    <p id="login-error" class="error" role="alert"></p>
+  </section>
+
+  <section id="workspace" class="workspace" hidden>
+    <figure class="crop-pane">
+      <div class="crop-frame is-loading" id="crop-frame" title="Click or press Z to zoom">
+        <img id="crop" alt="Region being adjudicated">
+        <div class="crop-loading" id="crop-loading">Loading image…</div>
+      </div>
+      <figcaption>
+        <span><span class="region-id" id="region-label">Region</span> · <span class="page-id" id="page-label"></span></span>
+        <span class="hint"><kbd>Z</kbd> zoom · <kbd>+</kbd>/<kbd>−</kbd> text size</span>
+      </figcaption>
+    </figure>
+
+    <div class="work-pane">
+      <div class="editor">
+        <div class="editor-head">
+          <label for="resolved">Resolved text <span class="hint">(<kbd>T</kbd> to edit, <kbd>Esc</kbd> to leave)</span></label>
+          <span class="head-tools">
+            <button id="empty-btn" class="ghost small" type="button" title="Region holds no text: noise or stray ink (0 / N)">No text <kbd>0</kbd></button>
+            <span id="choice-state" class="chip"></span>
+          </span>
+        </div>
+        <textarea id="resolved" lang="bn" spellcheck="false" rows="1"></textarea>
+      </div>
+      <div class="cands-head">
+        <h2>Candidates</h2>
+        <span class="hint"><kbd>1</kbd>–<kbd>5</kbd> or <kbd>A</kbd>–<kbd>E</kbd> to pick · highlights show differences from the resolved text</span>
+      </div>
+      <div id="candidates" class="candidates"></div>
+    </div>
+  </section>
+
+  <section id="done" class="panel done" hidden>
+    <div class="big">✓</div>
+    <h2>All conflicts resolved</h2>
+    <p id="done-detail" class="hint"></p>
+  </section>
+</main>
+
+<footer class="actionbar" id="actionbar" hidden>
+  <div class="reason">
+    <label for="reason">Reason</label>
+    <input id="reason" list="reason-presets" autocomplete="off" placeholder="Why this text? (required)">
+    <datalist id="reason-presets">
+      <option value="Matches the image"></option>
+      <option value="Edited to match the image"></option>
+      <option value="Transcribed from the image; no candidate was correct"></option>
+      <option value="Image is ambiguous; closest reading kept"></option>
+    </datalist>
+  </div>
+  <div class="actions">
+    <button id="prev-btn" class="ghost" type="button" title="Previous region (K / ←)" aria-label="Previous region">‹</button>
+    <button id="skip-btn" class="ghost" type="button" title="Skip for now (S / →)">Skip <kbd>S</kbd></button>
+    <button id="submit-btn" class="primary" type="button" title="Submit (Ctrl+Enter, or Enter when not typing)">Submit <kbd>Ctrl ↵</kbd></button>
+  </div>
+</footer>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<div id="help" class="overlay" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="help-title" tabindex="-1">
+    <h2 id="help-title">Keyboard shortcuts</h2>
+    <table>
+      <tr><td><kbd>1</kbd>–<kbd>5</kbd> · <kbd>A</kbd>–<kbd>E</kbd></td><td>Pick a candidate (copies its text into the editor)</td></tr>
+      <tr><td><kbd>Alt</kbd>+<kbd>1</kbd>–<kbd>5</kbd></td><td>Pick a candidate even while typing</td></tr>
+      <tr><td><kbd>0</kbd> · <kbd>N</kbd> · <kbd>Alt</kbd>+<kbd>0</kbd></td><td>No text: the region is only noise or stray ink (submits empty)</td></tr>
+      <tr><td><kbd>T</kbd></td><td>Edit the resolved text</td></tr>
+      <tr><td><kbd>R</kbd></td><td>Edit the reason</td></tr>
+      <tr><td><kbd>Esc</kbd></td><td>Leave a text field (back to pick keys)</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>Submit and go to the next conflict (works anywhere)</td></tr>
+      <tr><td><kbd>Enter</kbd></td><td>Submit when not typing, or from the reason field</td></tr>
+      <tr><td><kbd>S</kbd> · <kbd>→</kbd> · <kbd>J</kbd></td><td>Skip to the next conflict (left open)</td></tr>
+      <tr><td><kbd>←</kbd> · <kbd>K</kbd></td><td>Previous conflict</td></tr>
+      <tr><td><kbd>[</kbd> · <kbd>]</kbd></td><td>Previous / next page with open conflicts</td></tr>
+      <tr><td><kbd>Z</kbd></td><td>Zoom the region image</td></tr>
+      <tr><td><kbd>+</kbd> · <kbd>−</kbd></td><td>Bengali text size</td></tr>
+      <tr><td><kbd>?</kbd></td><td>This help</td></tr>
+    </table>
+    <p>The editor starts with the consensus reading (most agreement, Bengali
+      script preferred, then the reading closest to all others). The reason is
+      filled in from what you do (picked / edited / typed) until you type your own.
+      A candidate label is recorded only when the resolved text is exactly that candidate.</p>
+  </div>
+</div>
+
+<div id="zoom" class="overlay zoom" hidden title="Click or press Esc to close" role="dialog" aria-modal="true" aria-label="Region image, full size" tabindex="-1">
+  <img id="zoom-img" alt="Region being adjudicated, full size">
+</div>
+
+<script src="/static/study_adjudicate.js"></script>
+</body>
+</html>

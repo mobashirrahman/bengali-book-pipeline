@@ -15,7 +15,12 @@ behind a lazy import inside :class:`ExistingPolicyAdapter`.
 
 from __future__ import annotations
 
+import dataclasses
+import datetime
+import hashlib
 import json
+import os
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -315,6 +320,234 @@ class EvidenceGateAdapter(BaseAdapter):
         )
 
 
+# Names of env vars whose VALUES are secrets and must never surface in a
+# Prediction field (keys) or be linkable (endpoint hosts).
+_SECRET_ENV_NAMES = (
+    "GOOGLE_VISION_API_KEY",
+    "AZURE_VISION_KEY",
+    "AZURE_VISION_ENDPOINT",
+)
+
+
+def _redact_text(text: str, *, env=None) -> str:
+    """Return ``text`` with every secret value and endpoint host stripped."""
+    source = env if env is not None else os.environ
+    try:
+        values = [source.get(name, "") for name in _SECRET_ENV_NAMES]
+    except Exception:
+        values = []
+    redacted = text if isinstance(text, str) else str(text)
+    for value in values:
+        if value:
+            redacted = redacted.replace(value, "[redacted]")
+            host = _host_of(value)
+            if host:
+                redacted = redacted.replace(host, "[redacted-host]")
+    return redacted
+
+
+def _host_of(value: str) -> str:
+    """Extract the host part of a URL-ish value ("" when not URL-like)."""
+    text = value.strip()
+    for scheme in ("https://", "http://"):
+        if text.lower().startswith(scheme):
+            rest = text[len(scheme):]
+            return rest.split("/", 1)[0].split("@")[-1].split(":", 1)[0]
+    return ""
+
+
+def _numeric_resource_value(value):
+    """Coerce one resource value to the numeric-only schema contract.
+
+    ``schema.Prediction.resource`` accepts int/float values only, so string
+    provenance (endpoint sha, api/model versions) is bound through
+    ``config_hash``/``raw_output`` instead and only numeric projections land
+    here. Bools become 0/1; anything else non-numeric is dropped (None).
+    """
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return value
+    return None
+
+
+class VendorOCRAdapter(BaseAdapter):
+    """Base class for pay-per-call vendor OCR recognizers (GV/AZ).
+
+    Gated exactly like :class:`TextOnlyCorrectionAdapter`: with
+    ``allow_execution=False`` or no client transport the adapter yields
+    ``unsupported`` without touching the filesystem or network. When allowed
+    it reads image bytes from ``image_ref`` and delegates to the
+    caller-supplied client
+    ``client(image_bytes=..., page_id=..., adapter_id=..., config=...)``.
+
+    ``spec.config`` must pin ``endpoint_env`` (env-var name, or a literal
+    public endpoint URL for Google), ``api_version``, ``model_version`` and
+    ``drift_epoch`` (YYYY-MM-DD the spec was frozen). The runtime endpoint
+    string is resolved from the environment at call time; its sha256
+    ("" when unset) is folded into both ``identity()["config_hash"]`` and the
+    Prediction's ``config_hash`` so a changed endpoint is a cache miss. The
+    per-call date is provenance only (``resource["call_date"]`` as a YYYYMMDD
+    int -- ``schema.Prediction.resource`` is numeric-only); version splits
+    happen by bumping ``drift_epoch`` explicitly, so reruns reproduce from
+    cache.
+    """
+
+    REQUIRED_CONFIG = ("endpoint_env", "api_version", "model_version",
+                       "drift_epoch")
+
+    # -- endpoint identity ---------------------------------------------
+    def _runtime_endpoint(self) -> str:
+        """Resolve the endpoint string from the environment at call time."""
+        marker = self.spec.config.get("endpoint_env", "")
+        if not isinstance(marker, str) or not marker:
+            return ""
+        lowered = marker.lower()
+        if lowered.startswith("https://") or lowered.startswith("http://"):
+            return marker  # literal public endpoint (Google)
+        return os.environ.get(marker, "")
+
+    def _endpoint_sha256(self) -> str:
+        endpoint = self._runtime_endpoint()
+        if not endpoint:
+            return ""
+        return hashlib.sha256(endpoint.encode("utf-8")).hexdigest()
+
+    def identity(self) -> dict:
+        base = super().identity()
+        folded = schema.record_hash(
+            {
+                "base": base["config_hash"],
+                "endpoint_sha256": self._endpoint_sha256(),
+            }
+        )
+        base["config_hash"] = folded
+        return base
+
+    # -- prediction entry point ----------------------------------------
+    def predict(
+        self,
+        *,
+        page_id: str,
+        image_ref: str = "",
+        ocr_text: str = "",
+        allow_execution: bool = False,
+        client=None,
+        **kwargs,
+    ) -> schema.Prediction:
+        started = time.perf_counter()
+        prediction = super().predict(
+            page_id=page_id,
+            image_ref=image_ref,
+            ocr_text=ocr_text,
+            allow_execution=allow_execution,
+            client=client,
+            **kwargs,
+        )
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        resource = self._provenance_resource()
+        return dataclasses.replace(
+            prediction,
+            config_hash=self.identity()["config_hash"],
+            timing_ms=max(0, elapsed_ms),
+            resource=resource,
+        )
+
+    def _provenance_resource(self) -> dict:
+        """Numeric provenance for the last :meth:`_run` call (schema-safe)."""
+        client_resource = getattr(self, "_last_client_resource", {})
+        merged: dict = {}
+        if isinstance(client_resource, dict):
+            for key, value in client_resource.items():
+                if not isinstance(key, str) or not key:
+                    continue
+                coerced = _numeric_resource_value(value)
+                if coerced is not None:
+                    merged[key] = coerced
+        today = datetime.datetime.now(datetime.timezone.utc).date()
+        merged["call_date"] = int(today.strftime("%Y%m%d"))
+        merged["version_mismatch"] = int(
+            bool(getattr(self, "_last_version_mismatch", False))
+        )
+        return merged
+
+    # -- client plumbing -------------------------------------------------
+    def _run(
+        self, *, page_id, image_ref, ocr_text, allow_execution, client
+    ) -> tuple[str, str, str]:
+        self._last_client_resource = {}
+        self._last_version_mismatch = False
+        if not allow_execution:
+            return self._unsupported(
+                f"recognizer {self.spec.adapter_id} gated: allow_execution=False"
+            )
+        if client is None:
+            return self._unsupported(
+                f"recognizer {self.spec.adapter_id} has no client transport"
+            )
+        if not isinstance(image_ref, str) or not image_ref:
+            return ("no image_ref for vendor OCR call", "", "invocation_error")
+        try:
+            image_bytes = Path(image_ref).read_bytes()
+        except (OSError, ValueError) as exc:
+            return (
+                _redact_text(f"cannot read image_ref: {type(exc).__name__}: {exc}"),
+                "",
+                "invocation_error",
+            )
+        try:
+            output = client(
+                image_bytes=image_bytes,
+                page_id=page_id,
+                adapter_id=self.spec.adapter_id,
+                config=dict(self.spec.config),
+            )
+        except Exception as exc:  # noqa: BLE001 -- transport failure is data
+            return (
+                _redact_text(f"{type(exc).__name__}: {exc}"),
+                "",
+                "invocation_error",
+            )
+        if not isinstance(output, dict):
+            raw, parsed, state = _wrap_client_output(output)
+            return (_redact_text(raw), _redact_text(parsed), state)
+        raw = output.get("raw_output", "")
+        parsed = output.get("parsed_text", raw)
+        state = output.get("failure_state", "ok")
+        if output.get("truncated") is True:
+            state = "truncated"
+        if not isinstance(raw, str) or not isinstance(parsed, str):
+            return ("client returned non-string output", "", "parse_error")
+        try:
+            state = schema.FailureState.coerce(state).value
+        except schema.ContractError:
+            return (_redact_text(raw), _redact_text(parsed), "parse_error")
+        if state == "ok" and not parsed.strip():
+            state = "empty"
+        resource = output.get("resource", {})
+        if isinstance(resource, dict):
+            self._last_client_resource = dict(resource)
+            reported = resource.get("model_version")
+            pinned = self.spec.config.get("model_version")
+            if (
+                isinstance(reported, str)
+                and reported
+                and isinstance(pinned, str)
+                and pinned
+                and reported != pinned
+            ):
+                self._last_version_mismatch = True
+        return (_redact_text(raw), _redact_text(parsed), state)
+
+
+class GoogleVisionAdapter(VendorOCRAdapter):
+    """GV -- Google Vision DOCUMENT_TEXT_DETECTION vendor recognizer."""
+
+
+class AzureReadAdapter(VendorOCRAdapter):
+    """AZ -- Azure AI Vision Read vendor recognizer."""
+
+
 ADAPTERS: dict[str, type[BaseAdapter]] = {
     "B0": UnchangedTesseractAdapter,
     "B1": UnavailableRecognizerAdapter,
@@ -322,6 +555,8 @@ ADAPTERS: dict[str, type[BaseAdapter]] = {
     "B3": TextOnlyCorrectionAdapter,
     "B4": ExistingPolicyAdapter,
     "B5": EvidenceGateAdapter,
+    "GV": GoogleVisionAdapter,
+    "AZ": AzureReadAdapter,
 }
 
 

@@ -1,0 +1,228 @@
+{
+ "_schema": "Per-book third-party-processing review for sending PAGE IMAGES to Google Cloud Vision / Azure AI Vision. The vendor rights_gate allows a page only if its book's decision is 'allow'. Anything else (pending, deny, missing) blocks every vendor call for that book. rights_basis uses schema.RightsBasis: unknown | public_domain | licensed | owner_permission | excluded. 'suggestion' is a non-authoritative hint drafted by the assistant; it is NOT a decision.",
+ "reviewer": "study PI (repository owner)",
+ "reviewed_utc": "2026-09-11",
+ "vendor_terms_checked": {
+  "google_cloud_vision": "",
+  "azure_ai_vision": ""
+ },
+ "books": [
+  {
+   "job_id": "1ab051000aac2bfa0a98e1827f81dcae487064af46bed7fc4b314e564bb2bd88",
+   "title": "Choraidhon-Rabindranath Tagore",
+   "author": "রবীন্দ্রনাথ ঠাকুর",
+   "cell": "pre1947/clean/short",
+   "decision": "allow",
+   "rights_basis": "unknown",
+   "evidence": "PI assertion 2026-09-11 (see decision_basis)",
+   "suggestion": "author d. 1941 -> likely public_domain (BD/IN term life+60)",
+   "source_sha256": "4060ede4fd04fb510ee13b8e8c40f6d5b916e45d3143c3bd8f28fcf3d4c646a7",
+   "page_ids": [
+    "1622597d6bb830f0c90da6362984922bf73189da8d1688b43117ef8b3a4fb658",
+    "12b31791e138a4b0343e9418de86703ffc4b09d48a29dfe121f0bc048f40228e",
+    "4f43e66fcabe960a3e307b6a7375bf877fa58968550fa95f722965c6962a6393",
+    "27bdac49b7f357f504ceab3d9b62d2907e6a91916251536f270dc675a0de1245",
+    "b6570350b8a6917a02c059bdc32d2a7dad6a09ef562fd797a5463f42a9f14d05"
+   ]
+  },
+  {
+   "job_id": "353387a71b7d7fca6a1aa419da275b4b2de41173f8a63ee41c30ca675818f5a9",
+   "title": "দেবদাস - শরৎচন্দ্র চট্টোপাধ্যায়",
+   "author": "শরৎচন্দ্র চট্টোপাধ্যায়",
+   "cell": "pre1947/clean/long",
+   "decision": "allow",
+   "rights_basis": "unknown",
+   "evidence": "PI assertion 2026-09-11 (see decision_basis)",
+   "suggestion": "author d. 1938 -> likely public_domain",
+   "source_sha256": "888507bfc58a45b7b8e299841fb2fc4368893619eececc626da7f9fd1282490c",
+   "page_ids": [
+    "fb4b8a8929d2bf84348355bae105a5d2a2df5b4dbd4c62a39af1d41fb0899973",
+    "10e629b971ff71663cb2c35f084f13e19cd77e25f663fdb5fac2777ebac81900",
+    "a9e98d8d5fb538ef423ddfc2fa88ca5fbece4a1e0c1462d4b22dd91520cc906d",
+    "db034177da4f480a6812d848e5b05fd0ee626b91fd8f00f68b84c8c40b495b1f",
+    "1db0c88d29a50c482c244f8f0f8a2ace8841fc1a12187fb097da97af9af31bf4"
+   ]
+  },
+  {
+   "job_id": "60df28fc1c6aa633454442d2ac68d358acc3034503b4e749dd2a640ef8765a7f",
+   "title": "চক্রবাক - কাজী নজরুল ইসলাম",
+   "author": "কাজী নজরুল ইসলাম",
+   "cell": "pre1947/mixed/short",
+   "decision": "allow",
+   "rights_basis": "unknown",
+   "evidence": "PI assertion 2026-09-11 (see decision_basis)",
+   "suggestion": "author d. 1976 -> in copyright until ~2037 despite pre-1947 publication",
+   "source_sha256": "09858b1c083623c87e4ac2b334a88b17385876f531606c4a62773da0c7e176ee",
+   "page_ids": [
+    "ee2d0a6ec4a85879e9af5eb75842130365dd553ab39ef74b74dcec9ff4ef90a8",
+    "a0595ea39208fdd1ae875774c0766186dd9401e9ec302508e2f465dd24c265e6",
+    "01237d7e698df66d372b8399ad410f16c140ef88da9b7f7e52c5777b1e114a7d",
+    "1f1e844bbb1e840a04881455f130efc4fa62e9bd170ba79fc3e5d74efc5ca94c",
+    "c8be91fc1dc7c5ca12a759c25f1e988201385c19a810c11d19edd0a6a43cdd9c"
+   ]
+  },
+  {
+   "job_id": "a926ea673a1743ce45991b583e160c20f40934c9b76293ae5cb6e62be590f3b6",
+   "title": "(০৯) মাইকেল (নাটক) - শ্রীমহেন্দ্রনাথ গুপ্ত",
+   "author": "শ্রীমহেন্দ্রনাথ গুপ্ত (about মাইকেল মধুসূদন দত্ত)",
+   "cell": "pre1947/mixed/long",
+   "decision": "allow",
+   "rights_basis": "unknown",
+   "evidence": "PI assertion 2026-09-11 (see decision_basis)",
+   "suggestion": "depends on Mahendranath Gupta's death year - verify",
+   "source_sha256": "dee1bacf168599f1483f898b14f4f56ed5f0b9479e4cfb718deceadc5d41d71a",
+   "page_ids": [
+    "3860477667c869186b057daf96e9e76b07b2d7c12907e04c7afecb24628d8a91",
+    "3b74be34b5a3dba753e77481902873009b422f6e6ffbd658434e2ab7a6614217",
+    "e5c011131be8e8fa3948d1c72484c847ff1aa3ae82777e7bb393f7d3613041a0",
+    "0a8200838e98b3fc7cba35d94b2a0bc61754c5ffb52996855822bd471f4e4f91",
+    "b1e9900d49dddb469182e94f9f5f28067117a6e164c68366d61554fbb28f37ce"
+   ]
+  },
+  {
+   "job_id": "a91ccd5e069514d75405dfc70bf946e5e3cae901dce08be664a061993bb93af7",
+   "title": "Unknown Author - ১৫০টি কবিতার বই - a9d5d0a05290",
+   "author": "unknown (incoming-scraped)",
+   "cell": "pre1947/noisy/short",
+   "decision": "allow",
+   "rights_basis": "unknown",
+   "evidence": "PI assertion 2026-09-11 (see decision_basis)",
+   "suggestion": "author unknown -> cannot establish; default deny unless research basis chosen",
+   "source_sha256": "a9d5d0a0529016ba6d1f5c7017f5217ffc8822c618ca9d15a9962ba073c4ec07",
+   "page_ids": [
+    "828e4b19907f471209b087a8cacd11c861cc05a77d9908020dafb946896c8ddc",
+    "81115cb33db00c6693c0930d896d03fe2124b523f74f65b2e6d20356f8f4bbc4",
+    "bf829595a4a2eda241abbeca503203296f69a324ad9c6cac96eea91bbaf54fae",
+    "0ae975d568e849c29fd86fe7a310abe33640b56546dfb410fc8558501a923f20",
+    "0582f1a008e3d68d31c402b0689aca9ec0ca4687f695245bb93ea9603d53ae02"
+   ]
+  },
+  {
+   "job_id": "9987cedf2841c80784e63f79c5a0608df0cc42965bd2bba884e9cc4638080828",
+   "title": "এসো রঙ করি",
+   "author": "unknown (ছোটদের বই)",
+   "cell": "pre1947/noisy/long",
+   "decision": "allow",
+   "rights_basis": "unknown",
+   "evidence": "PI assertion 2026-09-11 (see decision_basis)",
+   "suggestion": "author unknown -> cannot establish",
+   "source_sha256": "5aaca7f6f2ac405fb6155ca2d4a66a243a7e46f1be1e0e16a4e03d18c66d6b36",
+   "page_ids": [
+    "0aac6c07e08996843ec047ebac4250797e3d7a373a8e06861415ee9b3ad23bbf",
+    "ae390cd87e82bf364688ab5d28f9955d90e11cb02b29a4a6f183223e3af62aef",
+    "455e6f0bb146ada32d521a663cf1d860e2e123a9b4361f74a40095fa432ea0e8",
+    "fc71fb5342ea4ff9532a09da5d20def61faac47c7e798ba899ba1fda25873c61",
+    "8ae1a40b13c5bc1e87fe9649b8412a94a6fa44272cd93e1a9e0179b50976bc8d"
+   ]
+  },
+  {
+   "job_id": "56eece6b0dd285849635a2abc0587f9513222178f7586091cbf34ae3930bea55",
+   "title": "Cowboy",
+   "author": "সেবা প্রকাশনী (Western series)",
+   "cell": "modern/clean/short",
+   "decision": "allow",
+   "rights_basis": "unknown",
+   "evidence": "PI assertion 2026-09-11 (see decision_basis)",
+   "suggestion": "modern commercial publisher -> in copyright",
+   "source_sha256": "0b561cd68443e33b34ee2527eccf6b1fb499e86f67151688c267da09a58159fc",
+   "page_ids": [
+    "121900cd48c6a85941e05b81d187742b88a4148435fa5682f41abc1ee8c4972e",
+    "18458b317a1688a7e15c1eb64cb521f7974a5ad7635af151d396bb9d44b67cf9",
+    "254a1c6e3ffd71dd178991a2ec2182f0a8f4f583c8fed45e92bfab5ce3ab6a74",
+    "55e59b846b92286f9847def4c536771af1d2aa809dcb793015cbe58a31df9f1b",
+    "b648bc5e4330e16c6d26df5361e6c1a1cf77ba01bedce3cea417f72b7a079bbe"
+   ]
+  },
+  {
+   "job_id": "589727f2d355b00b8947cc1f7e331e4427e87628932b3a79957976012f88d5a0",
+   "title": "আমি ভালো নেই, তুমি ভাল থেকো প্রিয় দেশ",
+   "author": "তসলিমা নাসরিন",
+   "cell": "modern/clean/long",
+   "decision": "allow",
+   "rights_basis": "unknown",
+   "evidence": "PI assertion 2026-09-11 (see decision_basis)",
+   "suggestion": "living author -> in copyright",
+   "source_sha256": "9d520529f8e9004f88d70f6bcac6b46d3832eb876e27b442645ae032920e2f84",
+   "page_ids": [
+    "977396b0be69b956eed49d1166f1380d64a981c4b52824425e5a53890db341a3",
+    "5aa57e4987dd2c70d949edb4d138217be699f60e2952d6a718acecc721f40737",
+    "4db66d635db10de1ca73c66039501d4f589489d58fadb91ca6f87a6626841650",
+    "c923e37491162a4dc88e72c2cd2e158ae57ad367c8fe019aa324ec78cc46054d",
+    "8f027c91b69ba83330a9f50c1db54bf7738e640a880b5d3d626083782db2965e"
+   ]
+  },
+  {
+   "job_id": "83af5471d78bc5c7f5ec857aa2d11365172a4a9778a8dd0affc1901d1c68e74a",
+   "title": "মুখোমুখি হুমায়ুন আজাদ",
+   "author": "হুমায়ুন আজাদ",
+   "cell": "modern/mixed/short",
+   "decision": "allow",
+   "rights_basis": "unknown",
+   "evidence": "PI assertion 2026-09-11 (see decision_basis)",
+   "suggestion": "author d. 2004 -> in copyright",
+   "source_sha256": "579c0fa5782064c6813ff9df83a1df67bafbf33b1041fb15baf16292abe05985",
+   "page_ids": [
+    "3e7df9aa4e7e85bad2e01caca61a392f5714d18676715be8b0379226b1976572",
+    "e3d0bcfd4dad1feaeace4f5f7093a23921e90094c82613e29b9a7318869d6366",
+    "a4fa42d9e37de91f7175eb255bac70a6e172362ffd6835a0adc8ef890d23fa99",
+    "c8a14696b9747957d661a409330739e6e544d3505e1eeb43fd8a136a3a8181d8",
+    "69c992b589802a2550d7d39a4db344eb1946669b9a3fa79aeaa878120ef13f96"
+   ]
+  },
+  {
+   "job_id": "4d2f85011e550f0f08fad4f4607e8881719eb6591d0921e93051a50379642653",
+   "title": "ইতালীর সেরা গল্প (tr. শ্রীরবীন্দ্রকুমার বসু)",
+   "author": "শ্রীরবীন্দ্রকুমার বসু (translator)",
+   "cell": "modern/mixed/long",
+   "decision": "allow",
+   "rights_basis": "unknown",
+   "evidence": "PI assertion 2026-09-11 (see decision_basis)",
+   "suggestion": "translation -> translator's term applies; verify",
+   "source_sha256": "0659bc675340b6c1eca027690a5132130b8966c3a4b65c8aeb66a4742d644f04",
+   "page_ids": [
+    "afaf8b2ba2593d4d24eadb602433188e11e439299a9f07d58b15eba4ff80e52b",
+    "14118b1d25bf8d1599dc8d75f7d50ccd25bc93563aefe74de8debcfbe1217b93",
+    "010554d4fda9e6ced16139816d2ba9124ea3ec835f8cb96770d57a880a53f33b",
+    "9bf3d5759c57eab28b2612a3da5233acccd1bcc4a0f00004a5b4bd2ab270a52d",
+    "0f1a9939726695f79d2a62192e2e006de9b51cb0d65f93716de103075b6571ee"
+   ]
+  },
+  {
+   "job_id": "d4ba4a581c39531e2cfe9e1497da5a09b586e136f3ef26ececf1712d070de459",
+   "title": "154",
+   "author": "আহসান হাবীব",
+   "cell": "modern/noisy/short",
+   "decision": "allow",
+   "rights_basis": "unknown",
+   "evidence": "PI assertion 2026-09-11 (see decision_basis)",
+   "suggestion": "author d. 1985 -> in copyright",
+   "source_sha256": "b9a2cedb1322a7535d05449f0ab964d6b74944b5b68c0f4fb2b9405fa3e0f8ef",
+   "page_ids": [
+    "da605e4608b3cd6dbdb298c6a467b7cbb01b67ca48ea19147454f468d2f4e09d",
+    "fa0d9ef40acc2ea340c385cdce65ca5555ef7aa2137618aaffd2ba798e974434",
+    "275c03e98c0e62d75483201e3c9460c997c1a412ab45001484721bbf14e58281",
+    "42f6565ee822d56b103c44404cb102d7ee1f2f73cab462e623635393edee3533",
+    "5a526dfd6817499f3082e0ee5f1a44f53b7e4fa2ec2890f93b3311a4a33ed268"
+   ]
+  },
+  {
+   "job_id": "cf2173c3ec3d8c5dd7acc0bab94a96df1efa789fc3a276000dafc95bfccfb84f",
+   "title": "(০৩) সঙ্গীত রত্নাকর - শ্রীনবীনচন্দ্র দত্ত",
+   "author": "শ্রীনবীনচন্দ্র দত্ত",
+   "cell": "modern/noisy/long",
+   "decision": "allow",
+   "rights_basis": "unknown",
+   "evidence": "PI assertion 2026-09-11 (see decision_basis)",
+   "suggestion": "likely 19th-c. author -> possibly public_domain; verify death year",
+   "source_sha256": "7ded2dabb4521d062a391a39d5e7b7296a8f5f563186d2cf97273bfc86d1731b",
+   "page_ids": [
+    "7e0fdbb2c59fb725cee315746164584c7f905797c9febf346b3d6be5175b08fd",
+    "ad28c4a103c43d7c18832dfa6d0d2d7373b7c4fa9d0061b302f7fd5f4096f7b2",
+    "0e0d219214e74e0df89b04c61d3428092f453eb22f30849c0539c9f9418e41b3",
+    "c71d3d3942abd2f5cacc82744dc65aec54705f373692a89f4ec745df7de4c839",
+    "02ccf17e5ee425af2f9dcda05f43e40e362294e36f362b0d5c8000c030810ef2"
+   ]
+  }
+ ],
+ "decision_basis": "PI instruction on 2026-09-11: 'Assume all rights for vendors of the books are provided.' Covers transient OCR processing of page images by Google Cloud Vision and Azure AI Vision only. Does NOT establish redistribution rights; rights_basis stays 'unknown' and export/release remains gated."
+}

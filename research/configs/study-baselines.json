@@ -1,0 +1,7 @@
+{
+  "adapters": [
+    {"adapter_id": "GV", "kind": "recognizer", "model_id": "google-vision-document-text-detection", "prompt_id": "none", "prompt_hash": "none", "crop_policy": "page_image", "config": {"endpoint_env": "https://vision.googleapis.com/v1", "api_version": "v1", "model_version": "builtin/stable", "drift_epoch": "2026-09-11", "feature": "DOCUMENT_TEXT_DETECTION", "language_hints": ["bn"]}},
+    {"adapter_id": "AZ", "kind": "recognizer", "model_id": "azure-ai-vision-read", "prompt_id": "none", "prompt_hash": "none", "crop_policy": "page_image", "config": {"endpoint_env": "AZURE_VISION_ENDPOINT", "api_version": "2024-02-01", "model_version": "2023-10-01", "drift_epoch": "2026-09-11"}}
+  ],
+  "budgets": {"GV": {"max_calls_per_month": 1000, "min_interval_seconds": 0}, "AZ": {"max_calls_per_month": 5000, "min_interval_seconds": 3.0}}
+}
