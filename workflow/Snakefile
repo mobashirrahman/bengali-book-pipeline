@@ -1,4 +1,4 @@
-# Bengali OCR benchmark: 4 engines x REID2019 + Mozhi-test.
+# Bengali OCR benchmark: 5 engines x REID2019 + Mozhi-test.
 #
 # Invoke from the repo root:
 #   snakemake -s workflow/Snakefile --sdm conda --cores 1
@@ -21,7 +21,7 @@ SCRIPTS = "workflow/scripts"
 
 
 wildcard_constraints:
-    engine="tesseract|easyocr|easyocr-crnn|surya|bbocr|deepseekocr",
+    engine="tesseract|easyocr|easyocr-crnn|surya|bbocr",
     split="reid|mozhi-test",
 
 
@@ -131,23 +131,6 @@ rule run_easyocr_crnn:
         "python {SCRIPTS}/run_easyocr.py --items {input} --output {output} --split {wildcards.split}"
         " --timeout {config[timeout_easyocr]} --device {config[easyocr_device]}"
         " --recog-network {config[crnn_recog_network]} --user-network-directory {config[crnn_dir]}"
-
-
-rule run_deepseekocr:
-    input:
-        WORK + "/items_{split}.json",
-    output:
-        WORK + "/hypotheses_deepseekocr_{split}.jsonl",
-    conda:
-        "envs/deepseekocr.yaml"
-    resources:
-        gpu=1,
-    shell:
-        "python {SCRIPTS}/run_deepseekocr.py --items {input} --output {output} --split {wildcards.split}"
-        " --timeout {config[timeout_deepseekocr]} --weights-dir {config[deepseekocr_weights]}"
-        ' --prompt-page "{config[deepseekocr_prompt_page]}" --prompt-crop "{config[deepseekocr_prompt_crop]}"'
-        " --base-size {config[deepseekocr_base_size]} --image-size {config[deepseekocr_image_size]}"
-        " --dtype {config[deepseekocr_dtype]} --quantize {config[deepseekocr_quantize]}"
 
 
 def _score_files(_wildcards):

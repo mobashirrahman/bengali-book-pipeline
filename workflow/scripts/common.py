@@ -30,6 +30,46 @@ def selected(items: list[dict], max_items: int) -> list[dict]:
     return items if max_items <= 0 else items[:max_items]
 
 
+def assign_word_lines(word_refs, line_refs, localize):
+    """Assign each word box ``[x1, y1, x2, y2]`` to a line index.
+
+    ``localize(word, line_refs)`` returns a line index or ``None`` when the
+    word overlaps no line (apsisocr's ``localize_box`` does this). Upstream
+    ``ApsisOCR.process_boxes`` (0.0.7) crashes on those with
+    ``ValueError: cannot convert float NaN to integer``. Words with no
+    overlap fall back to the nearest line by vertical-center distance; when
+    no lines were detected at all, words are ordered top-to-bottom, each on
+    its own line. Hits are returned unchanged, so behavior is identical to
+    upstream whenever every word overlaps a line.
+    """
+    if not line_refs:
+        order = sorted(
+            range(len(word_refs)),
+            key=lambda i: (
+                (word_refs[i][1] + word_refs[i][3]) / 2.0,
+                (word_refs[i][0] + word_refs[i][2]) / 2.0,
+            ),
+        )
+        lines = [0] * len(word_refs)
+        for rank, i in enumerate(order):
+            lines[i] = rank
+        return lines
+    assigned = []
+    for word in word_refs:
+        lid = localize(word, line_refs)
+        if lid is not None:
+            assigned.append(int(lid))
+            continue
+        center = (word[1] + word[3]) / 2.0
+        best, best_dist = 0, None
+        for idx, (_x1, y1, _x2, y2) in enumerate(line_refs):
+            dist = abs(center - (y1 + y2) / 2.0)
+            if best_dist is None or dist < best_dist:
+                best, best_dist = idx, dist
+        assigned.append(best)
+    return assigned
+
+
 def run_sequential(
     items: list[dict],
     infer,

@@ -3,7 +3,7 @@
 #     --config run_name=smoke max_items_reid=2 max_items_mozhi=20
 run_name: full
 output_root: pdf-craft-output/external-eval/runs
-engines: [tesseract, easyocr, easyocr-crnn, surya, bbocr, deepseekocr]
+engines: [tesseract, easyocr, easyocr-crnn, surya, bbocr]
 
 # Pinned inputs (staged 2026-09-07; zips are the canonical copies)
 reid_zip: pdf-craft-output/external-eval/REID2019.zip
@@ -22,7 +22,6 @@ timeout_tesseract: 120
 timeout_easyocr: 180
 timeout_surya: 600
 timeout_bbocr: 300
-timeout_deepseekocr: 600
 
 # Tesseract (external binary; runs inside the lightweight benchmark env)
 tesseract_bin: /scratch/mdra00001/conda/envs/ocrbench/bin/tesseract
@@ -52,19 +51,6 @@ bbocr_device: cpu
 # serving as both model_storage_directory and user_network_directory.
 crnn_dir: pdf-craft-output/external-eval/easyocr-crnn-run
 crnn_recog_network: bengali_crnn
-
-# DeepSeek-OCR v2 (local weights, fp16; prompts recorded verbatim in provenance)
-deepseekocr_weights: models-cache/models--deepseek-ai--DeepSeek-OCR-2
-deepseekocr_prompt_page: "Free OCR."
-deepseekocr_prompt_crop: "Free OCR."
-deepseekocr_base_size: 1024
-# v2 only has learned query grids for 768 px crops / 1024 px global views
-# (640 raises UnboundLocalError('param_img')). bf16 is required by the vendor
-# infer(); full-precision weights OOM on 8 GB, so the LM is loaded LLM.int8
-# (vision encoder/projector/lm_head stay bf16). See run_deepseekocr.py.
-deepseekocr_image_size: 768
-deepseekocr_dtype: bfloat16
-deepseekocr_quantize: 8bit
 
 # Report provenance (quoted as one shell word)
 normalization: "NFC, curly apostrophes folded, whitespace collapsed; L/M/N word tokens (pdf_craft_tool.benchmark.score)"
