@@ -14,6 +14,7 @@ export interface StatsResponse {
   document_matches: number
   assets: number
   artifacts: number
+  readable_works: number
   source_coverage: Array<{ source: string; records: number }>
 }
 
@@ -123,6 +124,8 @@ export interface EditionResponse extends EditionSummary {
 export interface BookDocument {
   id: number
   mediaType: string
+  editionId?: number
+  editionTitle?: string
 }
 
 export interface DocumentResponse {
