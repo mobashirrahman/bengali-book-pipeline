@@ -110,8 +110,13 @@ class ProposalTests(unittest.TestCase):
         self.assertEqual(result, [])
 
     def test_propose_no_model_used(self):
-        forbidden = ("torch", "transformers", "ollama", "requests", "PIL")
-        for name in forbidden:
+        # ML frameworks and network clients must never load here. PIL is an
+        # image codec, not a model: the annotation server uses it lazily for
+        # region-crop serving, so it is excluded from the runtime check but
+        # stays forbidden as a top-level import of the proposer modules.
+        forbidden_runtime = ("torch", "transformers", "ollama", "requests")
+        forbidden_imports = forbidden_runtime + ("PIL",)
+        for name in forbidden_runtime:
             self.assertNotIn(name, sys.modules)
         repo_root = Path(__file__).resolve().parents[2]
         for module in ("adapters.py", "runners.py", "candidates.py"):
@@ -126,13 +131,13 @@ class ProposalTests(unittest.TestCase):
                 elif isinstance(node, ast.ImportFrom):
                     if node.module:
                         top_imports.add(node.module.split(".")[0])
-            for name in forbidden:
+            for name in forbidden_imports:
                 self.assertNotIn(name, top_imports, module)
         candidates.propose_from_disagreement(
             page_id=HEX_A, base_field="ocr",
             ocr_text="আমি বই পড়ি", alt_text="আমি খই পড়ি",
             proposer_id="disagree-v0", bank_seed="seed-1")
-        for name in forbidden:
+        for name in forbidden_runtime:
             self.assertNotIn(name, sys.modules)
 
 

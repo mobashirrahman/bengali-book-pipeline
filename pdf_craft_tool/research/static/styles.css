@@ -7,11 +7,17 @@ body {
   color: #1d1a14;
 }
 main { max-width: 46rem; margin: 0 auto; padding: 1.5rem; }
+main.wide { max-width: 72rem; }
 .hint { color: #5c5546; }
 .auth { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: end; }
 .auth label { display: grid; gap: 0.25rem; font-size: 0.9rem; }
-.auth input { padding: 0.4rem 0.5rem; min-width: 14rem; }
-button { padding: 0.45rem 0.9rem; cursor: pointer; }
+.auth input, .auth select { padding: 0.4rem 0.5rem; min-width: 14rem; font-size: 1rem; }
+button {
+  padding: 0.45rem 0.9rem;
+  cursor: pointer;
+  min-height: 2.75rem;
+  font-size: 1rem;
+}
 button:disabled { cursor: not-allowed; opacity: 0.5; }
 .progress, .status { min-height: 1.4em; font-size: 0.95rem; }
 .image-area {
@@ -33,3 +39,133 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
 .line-slot { margin: 0.75rem 0; }
 .line-slot label { display: block; font-size: 0.85rem; color: #5c5546; }
 .line-slot textarea { width: 100%; min-height: 3rem; font-size: 1.1rem; }
+#zoom-scroll {
+  overflow: auto;
+  max-height: 70vh;
+  border: 1px solid #d8d0bf;
+  background: #fff;
+  margin-bottom: 0.75rem;
+  touch-action: pan-x pan-y;
+}
+#zoom-scroll.zoomed #image-wrap { width: 200%; max-width: none; }
+#zoom-scroll.zoomed { touch-action: pan-x pan-y; }
+#image-wrap {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: top;
+}
+#image-wrap img {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: #fff;
+}
+#overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+#overlay.reporting {
+  pointer-events: auto;
+  cursor: crosshair;
+  touch-action: none;
+}
+.region-box {
+  position: absolute;
+  border: 2px solid rgba(37, 99, 235, 0.55);
+  background: rgba(37, 99, 235, 0.06);
+  box-sizing: border-box;
+  pointer-events: auto;
+  cursor: pointer;
+}
+.region-box.active {
+  border: 3px solid rgba(217, 119, 6, 0.95);
+  background: rgba(217, 119, 6, 0.10);
+}
+.region-box.proposed {
+  border: 2px dashed rgba(107, 114, 128, 0.8);
+  background: transparent;
+  pointer-events: none;
+}
+#drag-rect {
+  position: absolute;
+  border: 2px dashed rgba(124, 58, 237, 0.95);
+  background: rgba(124, 58, 237, 0.12);
+  box-sizing: border-box;
+}
+.region-label { font-weight: 600; }
+.region-box-label { display: block; font-size: 0.85rem; color: #5c5546; }
+#region-text { width: 100%; min-height: 5rem; font-size: 1.1rem; }
+.stepper { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; }
+.proposal-item {
+  border: 1px solid #d8d0bf;
+  border-radius: 0.4rem;
+  padding: 0.6rem;
+  margin: 0.6rem 0;
+  background: #fffdf6;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+.proposal-item input[type="text"] { flex: 1 1 12rem; padding: 0.35rem 0.5rem; }
+#crop-wrap {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  margin-bottom: 0.5rem;
+}
+#crop-image {
+  display: block;
+  max-width: 100%;
+  max-height: 38vh;
+  width: auto;
+  height: auto;
+  border: 2px solid #d97706;
+  border-radius: 0.25rem;
+  background: #fff;
+}
+#crop-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+#crop-overlay.reporting { pointer-events: auto; cursor: crosshair; }
+#signoff-row { margin-top: 0.75rem; display: flex; gap: 0.75rem; align-items: center; }
+
+/* Side-by-side: scan left, sticky transcription panel right. */
+#annotate-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(16rem, 5fr);
+  gap: 1rem;
+  align-items: start;
+}
+#annotate-grid .image-area { margin: 0; }
+#work {
+  position: sticky;
+  top: 1rem;
+  border: 2px solid #8a8172;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  background: #fffdf6;
+}
+.image-tools { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+#proposal-form { margin-top: 0.75rem; }
+#proposal-form label { display: grid; gap: 0.25rem; font-size: 0.9rem; }
+#proposal-form input { padding: 0.4rem 0.5rem; font-size: 1rem; }
+
+/* Small screens: stack, panel below the scan, sticky action bar. */
+@media (max-width: 60rem) {
+  main, main.wide { max-width: none; padding: 0.75rem; }
+  #annotate-grid { grid-template-columns: minmax(0, 1fr); }
+  #work { position: static; }
+  #work .stepper {
+    position: sticky;
+    bottom: 0;
+    background: #fffdf6;
+    padding: 0.5rem 0 calc(0.5rem + env(safe-area-inset-bottom, 0px));
+    border-top: 1px solid #d8d0bf;
+  }
+  .auth input { min-width: 0; width: 100%; }
+}

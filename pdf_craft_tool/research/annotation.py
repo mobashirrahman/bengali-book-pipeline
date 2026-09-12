@@ -54,6 +54,18 @@ FORBIDDEN_IN_ANNOTATOR_PAYLOAD = frozenset({
 TRIGGER_CHAR_DISAGREEMENT = 0.01
 TRIGGER_EXACT_LINE_AGREEMENT = 0.95
 
+#: Per-save cap (unchanged) and lifetime cap for reported annotation time.
+MAX_SAVE_ELAPSED_MS = 3_600_000
+MAX_TOTAL_ELAPSED_MS = 86_400_000
+
+#: Free-text cap for missed-text proposal notes.
+MAX_PROPOSAL_NOTE_CHARS = 500
+
+#: Assignment states. ``draft`` is a partially transcribed page: the text is
+#: visible only to its author (via ``assign()``) and to nobody else -- peers,
+#: adjudicators, statistics and export only ever see ``submitted`` rows.
+ASSIGNMENT_DRAFT = "draft"
+
 #: Filenames this store refuses to open: production databases live elsewhere
 #: and must never be touched by the annotation tool.
 _RESERVED_DB_NAMES = frozenset({"gold.sqlite3", "queue.sqlite3"})
@@ -228,7 +240,29 @@ class AnnotationStore:
                     updated REAL NOT NULL,
                     PRIMARY KEY (page_id, region_index)
                 );
+                CREATE TABLE IF NOT EXISTS proposed_regions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    page_id TEXT NOT NULL REFERENCES pages(page_id)
+                        ON DELETE CASCADE,
+                    reporter_id TEXT NOT NULL,
+                    geometry_json TEXT NOT NULL,
+                    note TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    reviewer_id TEXT NOT NULL DEFAULT '',
+                    reason TEXT NOT NULL DEFAULT '',
+                    created REAL NOT NULL,
+                    updated REAL NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS context_peeks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    page_id TEXT NOT NULL REFERENCES pages(page_id)
+                        ON DELETE CASCADE,
+                    annotator_id TEXT NOT NULL,
+                    region_index INTEGER NOT NULL,
+                    created REAL NOT NULL
+                );
             """)
+            self._migrate_pages_columns()
             now = time.time()
             for seed in seeds:
                 self.db.execute(
@@ -245,6 +279,20 @@ class AnnotationStore:
                         now,
                     ),
                 )
+
+    def _migrate_pages_columns(self) -> None:
+        """Add census sign-off columns to pre-existing annotation DBs."""
+        existing = {row["name"] for row in self.db.execute(
+            "PRAGMA table_info(pages)")}
+        for column, definition in (
+            ("census_approved", "INTEGER NOT NULL DEFAULT 0"),
+            ("census_reviewer", "TEXT NOT NULL DEFAULT ''"),
+            ("census_approved_at", "REAL NOT NULL DEFAULT 0"),
+        ):
+            if column not in existing:
+                with self.db:
+                    self.db.execute(
+                        f"ALTER TABLE pages ADD COLUMN {column} {definition}")
 
     # -- internal helpers ------------------------------------------------
     def _page_row(self, page_id: str) -> sqlite3.Row:
@@ -336,10 +384,25 @@ class AnnotationStore:
                     (page_id, annotator_id, 0, "{}", "assigned", 0, now),
                 )
                 current = self.db.execute(
-                    "SELECT revision, status FROM assignments "
+                    "SELECT revision, status, text_json FROM assignments "
                     "WHERE page_id=? AND annotator_id=?",
                     (page_id, annotator_id),
                 ).fetchone()
+            try:
+                drafts = json.loads(current["text_json"])
+            except (TypeError, ValueError):
+                drafts = {}
+            if not isinstance(drafts, dict):
+                drafts = {}
+            own_proposals = [
+                {
+                    "id": item["id"],
+                    "geometry": item["geometry"],
+                    "note": item["note"],
+                }
+                for item in self.list_proposals(page_id, status="pending")
+                if item["reporter_id"] == annotator_id
+            ]
             payload = {
                 "page_id": page_id,
                 "image_sha256": row["image_sha256"],
@@ -352,6 +415,10 @@ class AnnotationStore:
                     for entry in sorted(census["entries"],
                                         key=lambda item: item["region_index"])
                 ],
+                "reading_order": self._census_order(census),
+                "drafts": {str(key): value for key, value in drafts.items()},
+                "own_proposals": own_proposals,
+                "assignment_status": current["status"],
                 "revision": current["revision"],
             }
             _assert_blind(payload)
@@ -359,13 +426,24 @@ class AnnotationStore:
 
     def submit(self, page_id: str, annotator_id: str, *, revision: int,
                lines: dict, elapsed_ms: int = 0, image_sha256=None) -> dict:
-        """Save one annotator's transcription with optimistic concurrency."""
+        """Save one annotator's transcription with optimistic concurrency.
+
+        Partial saves are allowed: ``lines`` may cover any non-empty subset
+        of the census regions. Saved text merges with the annotator's
+        existing draft; the assignment stays ``draft`` until every census
+        region has text, when it promotes to ``submitted``. Only
+        ``submitted`` rows are visible to peers, adjudicators, statistics
+        and export. Reported time accumulates across saves.
+        """
         self._require_annotator(annotator_id)
         if type(revision) is not int or revision < 0:
             raise ValueError("revision must be a non-negative integer")
         if (type(elapsed_ms) is not int or elapsed_ms < 0
-                or elapsed_ms > 3_600_000):
-            raise ValueError("elapsed_ms must be between 0 and 3600000")
+                or elapsed_ms > MAX_SAVE_ELAPSED_MS):
+            raise ValueError(
+                "elapsed_ms must be between 0 and "
+                f"{MAX_SAVE_ELAPSED_MS}"
+            )
         if not isinstance(lines, dict) or not lines:
             raise ValueError("lines must be a non-empty dict")
         with self._lock:
@@ -385,19 +463,19 @@ class AnnotationStore:
                     raise ValueError(
                         f"lines keys must be region indices, got {key!r}"
                     )
+                if index not in expected:
+                    raise ValueError(
+                        f"region {index} is not in the census for "
+                        f"page {page_id!r}"
+                    )
                 if not isinstance(value, str):
                     raise ValueError(
                         f"lines[{index}] must be a string, got {type(value)}"
                     )
                 normalised[index] = unicodedata.normalize("NFC", value)
-            if set(normalised) != expected:
-                raise ValueError(
-                    "lines must cover exactly the census region indices "
-                    f"{sorted(expected)}, got {sorted(normalised)}"
-                )
             with self.db:
                 current = self.db.execute(
-                    "SELECT revision FROM assignments "
+                    "SELECT revision, text_json, elapsed_ms FROM assignments "
                     "WHERE page_id=? AND annotator_id=?",
                     (page_id, annotator_id),
                 ).fetchone()
@@ -411,16 +489,30 @@ class AnnotationStore:
                         f"expected revision {revision}, current is "
                         f"{current['revision']}"
                     )
+                try:
+                    merged = json.loads(current["text_json"])
+                except (TypeError, ValueError):
+                    merged = {}
+                if not isinstance(merged, dict):
+                    merged = {}
+                for index, text in normalised.items():
+                    merged[str(index)] = text
+                complete = set(int(key) for key in merged) == expected
+                status = (AnnotationStatus.SUBMITTED.value if complete
+                          else ASSIGNMENT_DRAFT)
+                total_elapsed = min(current["elapsed_ms"] + elapsed_ms,
+                                    MAX_TOTAL_ELAPSED_MS)
                 now = time.time()
                 self.db.execute(
                     "UPDATE assignments SET revision=?, text_json=?, "
-                    "status='submitted', elapsed_ms=?, updated=? "
+                    "status=?, elapsed_ms=?, updated=? "
                     "WHERE page_id=? AND annotator_id=?",
                     (
                         revision + 1,
-                        _stable_json({str(k): normalised[k]
-                                      for k in sorted(normalised)}),
-                        elapsed_ms,
+                        _stable_json({str(k): merged[k]
+                                      for k in sorted(merged)}),
+                        status,
+                        total_elapsed,
                         now,
                         page_id,
                         annotator_id,
@@ -430,7 +522,7 @@ class AnnotationStore:
                 "page_id": page_id,
                 "annotator_id": annotator_id,
                 "revision": revision + 1,
-                "status": AnnotationStatus.SUBMITTED.value,
+                "status": status,
             }
 
     def peer_ready(self, page_id: str) -> bool:
@@ -438,6 +530,320 @@ class AnnotationStore:
         with self._lock:
             self._page_row(page_id)
             return len(self._submitted_rows(page_id)) >= 2
+
+    # -- missed-text proposals ----------------------------------------------
+    @staticmethod
+    def _proposal_dict(row: sqlite3.Row) -> dict:
+        return {
+            "id": row["id"],
+            "page_id": row["page_id"],
+            "reporter_id": row["reporter_id"],
+            "geometry": json.loads(row["geometry_json"]),
+            "note": row["note"],
+            "status": row["status"],
+            "reviewer_id": row["reviewer_id"],
+            "reason": row["reason"],
+            "created": row["created"],
+            "updated": row["updated"],
+        }
+
+    def propose_region(self, page_id: str, reporter_id: str, *,
+                       geometry: dict, note: str = "") -> dict:
+        """Report page text the census missed (a dragged box + optional note).
+
+        The proposal stays private to the reporter and reviewers: it never
+        enters any annotator payload and changes nothing until a reviewer
+        approves it (see :meth:`review_proposal`).
+        """
+        self._require_annotator(reporter_id)
+        if not isinstance(geometry, dict):
+            raise ValueError("geometry must be a dict")
+        try:
+            clean_geometry = schema.Geometry.from_dict(geometry).to_dict()
+        except schema.ContractError as error:
+            raise ValueError(f"invalid proposal geometry: {error}") from None
+        if not isinstance(note, str):
+            raise ValueError("note must be a string")
+        if len(note) > MAX_PROPOSAL_NOTE_CHARS:
+            raise ValueError(
+                "note must be at most "
+                f"{MAX_PROPOSAL_NOTE_CHARS} characters"
+            )
+        with self._lock:
+            page = self._page_row(page_id)
+            if page["status"] in (AnnotationStatus.FLAGGED.value,
+                                  AnnotationStatus.PROVISIONAL.value):
+                raise ValueError(
+                    f"page {page_id!r} is {page['status']} and cannot "
+                    "gain new regions"
+                )
+            now = time.time()
+            with self.db:
+                cursor = self.db.execute(
+                    "INSERT INTO proposed_regions(page_id, reporter_id, "
+                    "geometry_json, note, status, reviewer_id, reason, "
+                    "created, updated) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (
+                        page_id,
+                        reporter_id,
+                        _stable_json(clean_geometry),
+                        unicodedata.normalize("NFC", note),
+                        "pending",
+                        "",
+                        "",
+                        now,
+                        now,
+                    ),
+                )
+                row = self.db.execute(
+                    "SELECT * FROM proposed_regions WHERE id=?",
+                    (cursor.lastrowid,),
+                ).fetchone()
+            return self._proposal_dict(row)
+
+    def list_proposals(self, page_id: str | None = None, *,
+                       status: str | None = None) -> list[dict]:
+        """Reviewer-facing queue of missed-text proposals (no page text)."""
+        if status is not None and status not in ("pending", "approved",
+                                                 "rejected"):
+            raise ValueError(
+                f"status must be pending/approved/rejected, got {status!r}"
+            )
+        with self._lock:
+            query = "SELECT * FROM proposed_regions"
+            clauses = []
+            params: list = []
+            if page_id is not None:
+                self._page_row(page_id)
+                clauses.append("page_id=?")
+                params.append(page_id)
+            if status is not None:
+                clauses.append("status=?")
+                params.append(status)
+            if clauses:
+                query += " WHERE " + " AND ".join(clauses)
+            query += " ORDER BY id"
+            return [self._proposal_dict(row)
+                    for row in self.db.execute(query, params)]
+
+    def review_proposal(self, proposal_id: int, reviewer_id: str, *,
+                        decision: str, reason: str = "") -> dict:
+        """Approve or reject a missed-text proposal.
+
+        Approval appends a census region (next ``region_index``; the reading
+        order is re-derived geometrically, top-to-bottom then left-to-right)
+        and reopens every ``submitted``/``adjudicated`` assignment on the
+        page to ``draft`` -- saved texts are kept, but both annotators must
+        confirm and resubmit against the new census. The reviewer cannot be
+        the reporter, and rejection needs a reason.
+        """
+        if type(proposal_id) is bool or not isinstance(proposal_id, int):
+            raise ValueError("proposal_id must be an integer")
+        if not isinstance(reviewer_id, str) or not reviewer_id:
+            raise ValueError("reviewer_id must be a non-empty string")
+        if decision not in ("approve", "reject"):
+            raise ValueError(
+                f"decision must be approve/reject, got {decision!r}"
+            )
+        if not isinstance(reason, str):
+            raise ValueError("reason must be a string")
+        if decision == "reject" and not reason.strip():
+            raise ValueError("rejection needs a non-empty reason")
+        with self._lock:
+            row = self.db.execute(
+                "SELECT * FROM proposed_regions WHERE id=?",
+                (proposal_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"unknown proposal {proposal_id!r}")
+            if row["status"] != "pending":
+                raise ValueError(
+                    f"proposal {proposal_id} is already {row['status']}"
+                )
+            if reviewer_id == row["reporter_id"]:
+                raise ValueError("the reviewer cannot be the reporter")
+            now = time.time()
+            with self.db:
+                if decision == "reject":
+                    self.db.execute(
+                        "UPDATE proposed_regions SET status='rejected', "
+                        "reviewer_id=?, reason=?, updated=? WHERE id=?",
+                        (reviewer_id,
+                         unicodedata.normalize("NFC", reason),
+                         now, proposal_id),
+                    )
+                    return self._proposal_dict(self.db.execute(
+                        "SELECT * FROM proposed_regions WHERE id=?",
+                        (proposal_id,),
+                    ).fetchone())
+                page = self._page_row(row["page_id"])
+                if page["status"] in (AnnotationStatus.FLAGGED.value,
+                                      AnnotationStatus.PROVISIONAL.value):
+                    raise ValueError(
+                        f"page {row['page_id']!r} is {page['status']} and "
+                        "cannot gain new regions"
+                    )
+                census = self._census_of(page)
+                indices = self._region_indices(census)
+                new_index = (max(indices) + 1) if indices else 0
+                geometry = json.loads(row["geometry_json"])
+                census["entries"].append({
+                    "region_index": new_index,
+                    "geometry": geometry,
+                    "kind": "body",
+                    "note": row["note"],
+                    "unreadable": False,
+                    "proposed_by": row["reporter_id"],
+                    "approved_by": reviewer_id,
+                })
+                boxes = [
+                    (entry["geometry"]["y0"], entry["geometry"]["x0"],
+                     entry["region_index"])
+                    for entry in census["entries"]
+                ]
+                census["reading_order"] = [
+                    index for _, _, index in sorted(boxes)
+                ]
+                self.db.execute(
+                    "UPDATE pages SET census_json=?, status='assigned', "
+                    "census_approved=0, census_reviewer='', "
+                    "census_approved_at=0, updated=? WHERE page_id=?",
+                    (_stable_json(census), now, row["page_id"]),
+                )
+                # Reopen finished assignments: texts are kept, but both
+                # annotators must resubmit against the amended census. Every
+                # assignment moves one revision so stale saves conflict.
+                self.db.execute(
+                    "UPDATE assignments SET revision=revision+1, "
+                    "status=CASE WHEN status IN ('submitted','adjudicated') "
+                    "THEN 'draft' ELSE status END WHERE page_id=?",
+                    (row["page_id"],),
+                )
+                self.db.execute(
+                    "UPDATE proposed_regions SET status='approved', "
+                    "reviewer_id=?, reason=?, updated=? WHERE id=?",
+                    (reviewer_id,
+                     unicodedata.normalize("NFC", reason), now, proposal_id),
+                )
+                proposal = self._proposal_dict(self.db.execute(
+                    "SELECT * FROM proposed_regions WHERE id=?",
+                    (proposal_id,),
+                ).fetchone())
+            proposal["region_index"] = new_index
+            return proposal
+
+    # -- full-page peeks (transcriber context, logged) ----------------------
+    def log_peek(self, page_id: str, annotator_id: str,
+                 region_index: int) -> dict:
+        """Record that an annotator viewed the full page for one region."""
+        self._require_annotator(annotator_id)
+        if (type(region_index) is bool
+                or not isinstance(region_index, int)):
+            raise ValueError("region_index must be an integer")
+        with self._lock:
+            row = self._page_row(page_id)
+            census = self._census_of(row)
+            if region_index not in self._region_indices(census):
+                raise ValueError(
+                    f"region {region_index} is not in the census for "
+                    f"page {page_id!r}"
+                )
+            now = time.time()
+            with self.db:
+                cursor = self.db.execute(
+                    "INSERT INTO context_peeks(page_id, annotator_id, "
+                    "region_index, created) VALUES(?,?,?,?)",
+                    (page_id, annotator_id, region_index, now),
+                )
+                logged = self.db.execute(
+                    "SELECT * FROM context_peeks WHERE id=?",
+                    (cursor.lastrowid,),
+                ).fetchone()
+            return {
+                "id": logged["id"],
+                "page_id": logged["page_id"],
+                "annotator_id": logged["annotator_id"],
+                "region_index": logged["region_index"],
+                "created": logged["created"],
+            }
+
+    def export_peeks(self, page_id: str | None = None) -> list[dict]:
+        """Peek log for the pilot record (no transcribed text)."""
+        with self._lock:
+            if page_id is not None:
+                self._page_row(page_id)
+                rows = self.db.execute(
+                    "SELECT * FROM context_peeks WHERE page_id=? ORDER BY id",
+                    (page_id,),
+                )
+            else:
+                rows = self.db.execute(
+                    "SELECT * FROM context_peeks ORDER BY id")
+            return [{
+                "id": row["id"],
+                "page_id": row["page_id"],
+                "annotator_id": row["annotator_id"],
+                "region_index": row["region_index"],
+                "created": row["created"],
+            } for row in rows]
+
+    # -- census sign-off (coverage reviewer) --------------------------------
+    def set_census_signoff(self, page_id: str, reviewer_id: str, *,
+                           approved: bool) -> dict:
+        """Record (or withdraw) the coverage reviewer's census sign-off."""
+        if not isinstance(reviewer_id, str) or not reviewer_id:
+            raise ValueError("reviewer_id must be a non-empty string")
+        if not isinstance(approved, bool):
+            raise ValueError("approved must be a boolean")
+        with self._lock:
+            page = self._page_row(page_id)
+            if page["status"] in (AnnotationStatus.FLAGGED.value,
+                                  AnnotationStatus.PROVISIONAL.value):
+                raise ValueError(
+                    f"page {page_id!r} is {page['status']}; census "
+                    "sign-off does not apply to terminal pages"
+                )
+            now = time.time() if approved else 0.0
+            with self.db:
+                self.db.execute(
+                    "UPDATE pages SET census_approved=?, census_reviewer=?, "
+                    "census_approved_at=?, updated=? WHERE page_id=?",
+                    (1 if approved else 0,
+                     reviewer_id if approved else "",
+                     now, time.time(), page_id),
+                )
+                row = self._page_row(page_id)
+            return {
+                "page_id": page_id,
+                "census_approved": bool(row["census_approved"]),
+                "census_reviewer": row["census_reviewer"],
+                "census_approved_at": row["census_approved_at"],
+            }
+
+    def coverage_queue(self) -> list[dict]:
+        """Per-page census state for the coverage reviewer (no text)."""
+        with self._lock:
+            queue = []
+            for page in self.db.execute(
+                    "SELECT page_id, census_json, status, census_approved, "
+                    "census_reviewer, census_approved_at FROM pages "
+                    "ORDER BY page_id"):
+                census = json.loads(page["census_json"])
+                pending = self.db.execute(
+                    "SELECT count(*) FROM proposed_regions "
+                    "WHERE page_id=? AND status='pending'",
+                    (page["page_id"],),
+                ).fetchone()[0]
+                queue.append({
+                    "page_id": page["page_id"],
+                    "status": page["status"],
+                    "regions": len(self._region_indices(census)),
+                    "pending_proposals": pending,
+                    "census_approved": bool(page["census_approved"]),
+                    "census_reviewer": page["census_reviewer"],
+                    "census_approved_at": page["census_approved_at"],
+                })
+            return queue
 
     # -- conflict handling --------------------------------------------------
     def detect_conflicts(self, page_id: str) -> list[dict]:
@@ -636,6 +1042,66 @@ class AnnotationStore:
         """Frozen image hash for a page (read-only; no transcribed text)."""
         with self._lock:
             return self._page_row(page_id)["image_sha256"]
+
+    def region_geometry(self, page_id: str, region_index: int) -> dict:
+        """Census geometry for one region (for crop serving)."""
+        if type(region_index) is bool or not isinstance(region_index, int):
+            raise ValueError("region_index must be an integer")
+        with self._lock:
+            census = self._census_of(self._page_row(page_id))
+            for entry in census["entries"]:
+                if entry["region_index"] == region_index:
+                    return dict(entry["geometry"])
+            raise ValueError(
+                f"region {region_index} is not in the census for "
+                f"page {page_id!r}"
+            )
+
+    def page_ids(self) -> list[str]:
+        """Sorted page ids in the store (for deterministic short aliases)."""
+        with self._lock:
+            return [row["page_id"] for row in self.db.execute(
+                "SELECT page_id FROM pages ORDER BY page_id")]
+
+    def assignment_overview(self, annotator_id: str) -> list[dict]:
+        """Per-page work state for one annotator (own data only).
+
+        Each item carries the canonical ``page_id`` plus the author's own
+        ``status`` (``todo`` when no assignment exists), own drafted-region
+        count and census total. Never includes peer text, ids or stats.
+        """
+        self._require_annotator(annotator_id)
+        with self._lock:
+            rows = {row["page_id"]: row for row in self.db.execute(
+                "SELECT page_id, status, text_json FROM assignments "
+                "WHERE annotator_id=?", (annotator_id,))}
+            overview = []
+            for page in self.db.execute(
+                    "SELECT page_id, census_json FROM pages "
+                    "ORDER BY page_id"):
+                census = json.loads(page["census_json"])
+                total = len(self._region_indices(census))
+                row = rows.get(page["page_id"])
+                if row is None:
+                    overview.append({
+                        "page_id": page["page_id"],
+                        "status": "todo",
+                        "drafted_regions": 0,
+                        "total_regions": total,
+                    })
+                    continue
+                try:
+                    saved = json.loads(row["text_json"])
+                except (TypeError, ValueError):
+                    saved = {}
+                done = (len(saved) if isinstance(saved, dict) else 0)
+                overview.append({
+                    "page_id": page["page_id"],
+                    "status": row["status"],
+                    "drafted_regions": done,
+                    "total_regions": total,
+                })
+            return overview
 
     def set_status(self, page_id: str, status: str) -> str:
         """Record a page-level status (e.g. ``flagged`` / ``provisional``).

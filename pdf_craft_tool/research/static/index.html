@@ -10,29 +10,97 @@
 <main>
   <h1>Blind page transcription</h1>
   <p class="hint">Transcribe from the page image only. No drafts are shown here.</p>
-  <section class="auth">
-    <label>Annotator token
-      <input id="token" type="password" autocomplete="off" placeholder="paste your token">
+  <section class="auth" id="login-form">
+    <label>Your name
+      <input id="user-id" type="text" autocomplete="username" placeholder="annotator01">
     </label>
-    <label>Page id
-      <input id="page-id" type="text" autocomplete="off" placeholder="page sha256">
+    <label>PIN
+      <input id="pin" type="password" autocomplete="current-password" inputmode="numeric" placeholder="••••">
+    </label>
+    <button id="login" type="button">Log in</button>
+  </section>
+  <section class="auth" id="picker-wrap" hidden>
+    <span id="whoami" class="hint"></span>
+    <label>My pages
+      <select id="page-picker"></select>
     </label>
     <button id="load" type="button">Load page</button>
+    <button id="logout" type="button">Log out</button>
   </section>
   <p id="progress" class="progress" aria-live="polite"></p>
-  <section id="image-area" class="image-area" aria-label="Page image">
-    <p class="hint">Transcribe exactly what is on this scan. Verify the frozen
-      hash below matches what you were given.</p>
-    <img id="page-image" alt="Page scan" hidden>
+  <div id="annotate-grid">
+  <section id="image-area" class="image-area" aria-label="Page image" hidden>
+    <p class="hint">Full scan. Verify the frozen hash below matches what you
+      were given. The amber box is the region you are transcribing now.
+      Double-tap the scan to zoom.</p>
+    <div id="zoom-scroll">
+      <div id="image-wrap">
+        <img id="page-image" alt="Page scan" hidden>
+        <div id="overlay" aria-hidden="true"></div>
+      </div>
+    </div>
     <p id="image-missing" class="status" hidden>No scan available on the
       server for this page — do not transcribe from memory; tell the
       coordinator.</p>
     <p id="image-hash" class="mono"></p>
+    <div class="image-tools">
+      <button id="zoom-toggle" type="button" disabled>Zoom in</button>
+      <button id="report-toggle" type="button" disabled>Report missed text</button>
+    </div>
+    <p id="report-hint" class="hint" hidden>Missed-text mode: drag a rectangle
+      around page text that has no box, then confirm below. A reviewer decides
+      whether it becomes a transcription region.</p>
+    <div id="proposal-form" hidden>
+      <label>Note for the reviewer (optional)
+        <input id="proposal-note" type="text" autocomplete="off"
+          placeholder="e.g. footnote, running head">
+      </label>
+      <div class="stepper">
+        <button id="proposal-confirm" type="button">Send proposal</button>
+        <button id="proposal-cancel" type="button">Cancel</button>
+      </div>
+    </div>
   </section>
-  <form id="lines-form">
-    <div id="lines"></div>
-    <button id="submit" type="submit" disabled>Submit transcription</button>
-  </form>
+  <section id="work" aria-label="Transcription" hidden>
+    <p id="region-label" class="region-label"></p>
+    <div id="crop-wrap">
+      <img id="crop-image" alt="Region crop">
+      <div id="crop-overlay" aria-hidden="true"></div>
+    </div>
+    <p id="crop-missing" class="status" hidden>Crop failed to load — tell the
+      coordinator; do not transcribe from memory.</p>
+    <label class="region-box-label" for="region-text">Transcription for the
+      region above</label>
+    <textarea id="region-text" rows="4"></textarea>
+    <div class="stepper">
+      <button id="prev-region" type="button">← Previous</button>
+      <button id="next-region" type="button">Next →</button>
+      <button id="save-next" type="button">Save &amp; next</button>
+      <button id="save-exit" type="button">Save &amp; stop</button>
+      <button id="submit-page" type="button">Submit page</button>
+    </div>
+    <p id="draft-count" class="hint" aria-live="polite"></p>
+  </section>
+  </div>
+  <section id="coverage" aria-label="Coverage review" hidden>
+    <h2>Coverage review</h2>
+    <p class="hint">Check every page for text the census missed. Approving a
+      box appends a census region; signing off records the page as checked.
+      You never see transcripts.</p>
+    <button id="load-coverage" type="button">Load coverage queue</button>
+    <div id="coverage-list"></div>
+    <div id="signoff-row" hidden>
+      <button id="signoff-toggle" type="button">Sign off census</button>
+      <span id="signoff-state" class="hint"></span>
+    </div>
+  </section>
+  <section id="review" aria-label="Proposal review" hidden>
+    <h2>Missed-text proposals</h2>
+    <p class="hint">Reviewer only. Approve appends a census region and reopens
+      finished assignments as drafts; reject needs a reason.</p>
+    <button id="load-proposals" type="button">Load pending proposals</button>
+    <div id="proposal-list"></div>
+  </section>
   <p id="status" class="status" aria-live="polite"></p>
 </main>
 <script src="/static/app.js"></script>
