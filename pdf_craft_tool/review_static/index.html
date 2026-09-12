@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OCR Card Review</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div><span class="eyebrow">BENGALI OCR LAB</span><h1>Glyph or myth?</h1></div>
+      <div class="progress-wrap"><span id="progress-label">Loading…</span><progress id="progress" max="100" value="0"></progress></div>
+    </header>
+    <section id="empty" class="panel hidden"><h2>All caught up ✨</h2><p>Every frozen entry has a human label. Export the verified JSONL when ready.</p></section>
+    <section id="card" class="card hidden">
+      <div class="card-head"><div><span id="title" class="eyebrow"></span><h2 id="entry-label">Review entry</h2></div><span id="saved" class="saved">Not saved</span></div>
+      <div class="source-frame"><img id="crop" alt="Source PDF crop"><div id="crop-unavailable" class="unavailable hidden">Source crop unavailable — text review is still possible.</div></div>
+      <div class="text-grid">
+        <div class="text-panel"><label>OCR original</label><pre id="original"></pre></div>
+        <div class="text-panel suggestion"><label>Model suggestion</label><pre id="proposed"></pre><p id="reason" class="reason"></p></div>
+      </div>
+      <label class="final-label" for="verified">Verified text <span>(editable)</span></label>
+      <textarea id="verified" spellcheck="false"></textarea>
+      <div class="actions">
+        <button data-decision="keep" class="keep">← Keep OCR</button>
+        <button id="apply" class="apply">Apply suggestion →</button>
+        <button data-decision="flag" class="flag">⚑ Flag</button>
+        <button data-decision="skip" class="quiet">Skip ↓</button>
+        <button id="manual" data-decision="manual" class="manual">Save manual text</button>
+      </div>
+      <div class="sub-actions"><button id="back" class="link" disabled>↶ Revisit previous</button><a href="/api/export?kind=verified">Export verified</a><a href="/api/export?kind=all">Export all</a><span id="hint">Keys: ← keep · → apply · ↓ skip</span></div>
+    </section>
+    <div id="toast" role="status"></div>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>
